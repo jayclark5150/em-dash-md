@@ -1,4 +1,4 @@
-const CACHE = 'em-dash-v29';
+const CACHE = 'em-dash-md-v1';
 const ASSETS = [
   '/',
   '/index.html',
@@ -34,13 +34,6 @@ const CACHEABLE_ORIGINS = [
 ];
 
 self.addEventListener('fetch', (e) => {
-  // Don't intercept Google API calls
-  if (e.request.url.includes('googleapis.com') ||
-      e.request.url.includes('accounts.google.com') ||
-      e.request.url.includes('apis.google.com')) {
-    return;
-  }
-
   // Only handle GET; let the network deal with everything else.
   if (e.request.method !== 'GET') return;
 
