@@ -367,6 +367,10 @@ function createNewDoc() {
 }
 
 // ── Document browser ──────────────────────────────────────────────────────────
+function esc(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 async function openDocBrowser() {
   const modal = document.getElementById('doc-browser-modal');
   modal.classList.add('open');
@@ -391,14 +395,14 @@ async function renderDocBrowserList(query) {
     return;
   }
   list.innerHTML = docs.map(d => {
-    const date = new Date(d.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    const preview = (d.content || '').slice(0, 80).replace(/\n/g, ' ');
-    return `<div class="file-item" data-id="${d.id}">
+    const date    = new Date(d.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const preview = esc((d.content || '').slice(0, 80).replace(/\n/g, ' '));
+    return `<div class="file-item" data-id="${esc(d.id)}">
       <div style="flex:1;min-width:0">
-        <div class="file-name">${d.title}</div>
+        <div class="file-name">${esc(d.title)}</div>
         <div class="file-date">${preview}</div>
       </div>
-      <div class="file-date" style="margin-left:12px;white-space:nowrap">${date}</div>
+      <div class="file-date" style="margin-left:12px;white-space:nowrap">${esc(date)}</div>
     </div>`;
   }).join('');
   list.querySelectorAll('.file-item').forEach(el => {
