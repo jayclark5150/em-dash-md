@@ -534,6 +534,17 @@ body {
   flex-shrink: 0;
 }
 #statusbar span { white-space: nowrap; }
+#word-count { cursor: pointer; }
+#word-count:hover { color: var(--text); }
+#word-count.goal-met { color: var(--accent); font-weight: 600; }
+
+.goal-popover { position: fixed; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: none; align-items: center; gap: 8px; z-index: 9000; box-shadow: 0 4px 16px rgba(0,0,0,.2); font-size: 13px; color: var(--text2); }
+.goal-popover.open { display: flex; }
+.goal-popover label { white-space: nowrap; }
+.goal-popover input { width: 80px; padding: 4px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 13px; }
+.goal-popover input:focus { outline: none; border-color: var(--accent); }
+.goal-popover button { padding: 4px 10px; background: var(--bg2); border: 1px solid var(--border); border-radius: 4px; color: var(--text2); font-size: 12px; cursor: pointer; }
+.goal-popover button:hover { color: var(--text); }
 
 #tb-title {
   font-size: 11px;

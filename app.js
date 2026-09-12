@@ -326,10 +326,20 @@ async function copyCodeBlock(text, btn) {
 }
 
 // ── Stats & cursor ────────────────────────────────────────────────────────────
+let wordGoal = 0;
+try { wordGoal = parseInt(localStorage.getItem('md-word-goal') || '0', 10) || 0; } catch(_) {}
+
 function updateStats() {
   const text  = editor.value;
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
-  document.getElementById('word-count').textContent = `Words: ${words}`;
+  const wc    = document.getElementById('word-count');
+  if (wordGoal > 0) {
+    wc.textContent = `${words} / ${wordGoal} words`;
+    wc.classList.toggle('goal-met', words >= wordGoal);
+  } else {
+    wc.textContent = `Words: ${words}`;
+    wc.classList.remove('goal-met');
+  }
   document.getElementById('char-count').textContent = `Chars: ${text.length}`;
 }
 
@@ -1445,6 +1455,47 @@ async function loadReadmePreview() {
     // silently ignore — editor stays blank
   }
 }
+
+// ── Word goal popover ─────────────────────────────────────────────────────────
+(function () {
+  const wordCountEl = document.getElementById('word-count');
+  const popover     = document.getElementById('goal-popover');
+  const input       = document.getElementById('goal-input');
+
+  wordCountEl.addEventListener('click', () => {
+    const rect = wordCountEl.getBoundingClientRect();
+    popover.style.left   = rect.left + 'px';
+    popover.style.bottom = (window.innerHeight - rect.top + 8) + 'px';
+    popover.classList.add('open');
+    input.value = wordGoal || '';
+    input.focus();
+    input.select();
+  });
+
+  function applyGoal() {
+    const v = parseInt(input.value, 10);
+    wordGoal = (v > 0) ? v : 0;
+    try { localStorage.setItem('md-word-goal', wordGoal); } catch(_) {}
+    popover.classList.remove('open');
+    updateStats();
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter')  applyGoal();
+    if (e.key === 'Escape') popover.classList.remove('open');
+  });
+
+  document.getElementById('goal-clear-btn').addEventListener('click', () => {
+    input.value = '';
+    applyGoal();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!popover.contains(e.target) && e.target !== wordCountEl) {
+      popover.classList.remove('open');
+    }
+  });
+})();
 
 // ── Boot (runs after successful auth) ─────────────────────────────────────────
 async function bootApp() {
