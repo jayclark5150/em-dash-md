@@ -109,6 +109,9 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.15.2
+- Rename and Duplicate added to the ellipsis menu
+
 ### v3.15.1
 - Trash/undo: deleting a document now shows a 5-second undo toast instead of a confirmation dialog
 
