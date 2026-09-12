@@ -399,8 +399,21 @@ previewPane.addEventListener('scroll', () => {
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 let toastTimer;
-function showToast(msg, duration = 2500) {
-  toast.textContent = msg;
+function showToast(msg, duration = 2500, action = null) {
+  toast.innerHTML = '';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  toast.appendChild(span);
+  if (action) {
+    const btn = document.createElement('button');
+    btn.textContent = action.label;
+    btn.addEventListener('click', () => {
+      action.fn();
+      clearTimeout(toastTimer);
+      toast.classList.remove('show');
+    });
+    toast.appendChild(btn);
+  }
   toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), duration);
@@ -622,21 +635,44 @@ async function loadMostRecent() {
 // ── Delete ────────────────────────────────────────────────────────────────────
 async function deleteCurrentDoc() {
   if (!currentDocId) return;
-  if (!confirm(`Delete "${currentTitle}"? This cannot be undone.`)) return;
-  try {
-    await fsDelete(currentDocId);
-    clearTimeout(autoSaveTimer);
-    currentDocId = null;
-    isDirty      = false;
-    editor.value = '';
-    setTitle('New Document');
-    renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
-    document.getElementById('drive-delete-btn').style.display = 'none';
-    showToast('Document deleted');
-  } catch (err) {
-    showToast('Delete failed');
-    console.error('deleteCurrentDoc:', err);
-  }
+
+  const deletedId      = currentDocId;
+  const deletedTitle   = currentTitle;
+  const deletedContent = editor.value;
+
+  clearTimeout(autoSaveTimer);
+  currentDocId    = null;
+  currentDocIsNew = true;
+  isDirty         = false;
+  editor.value    = '';
+  setTitle('New Document');
+  renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+  document.getElementById('drive-delete-btn').style.display = 'none';
+
+  let undone = false;
+  showToast(`"${deletedTitle}" deleted`, 5000, {
+    label: 'Undo',
+    fn: () => {
+      undone          = true;
+      currentDocId    = deletedId;
+      currentDocIsNew = false;
+      isDirty         = false;
+      editor.value    = deletedContent;
+      setTitle(deletedTitle);
+      renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+      document.getElementById('drive-delete-btn').style.display = 'inline-flex';
+    }
+  });
+
+  setTimeout(async () => {
+    if (undone) return;
+    try {
+      await fsDelete(deletedId);
+    } catch (err) {
+      showToast('Delete failed');
+      console.error('deleteCurrentDoc:', err);
+    }
+  }, 5000);
 }
 
 document.getElementById('drive-delete-btn').addEventListener('click', deleteCurrentDoc);

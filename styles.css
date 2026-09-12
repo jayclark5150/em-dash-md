@@ -588,7 +588,8 @@ body {
 
 /* ── Toast ── */
 #toast { position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 10px 20px; border-radius: 8px; font-size: 14px; z-index: 9999; opacity: 0; pointer-events: none; transition: opacity .2s; white-space: nowrap; }
-#toast.show { opacity: 1; }
+#toast.show { opacity: 1; pointer-events: auto; }
+#toast button { background: none; border: none; color: var(--accent); font-size: 14px; font-weight: 600; cursor: pointer; margin-left: 14px; padding: 0; }
 
 /* ── Scrollbars ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
