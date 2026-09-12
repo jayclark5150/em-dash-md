@@ -319,7 +319,15 @@
 <div id="doc-browser-modal" class="modal-backdrop">
   <div class="modal" style="width:520px">
     <div class="modal-title">Open Document</div>
-    <input type="text" class="modal-search" id="doc-browser-search" placeholder="Search documents…" autocomplete="off"/>
+    <div class="doc-browser-controls">
+      <input type="text" class="modal-search" id="doc-browser-search" placeholder="Search documents…" autocomplete="off"/>
+      <select id="doc-browser-sort" class="doc-browser-sort">
+        <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
+        <option value="name-az">A-Z</option>
+        <option value="name-za">Z-A</option>
+      </select>
+    </div>
     <div class="file-list" id="doc-browser-list"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" id="doc-browser-cancel">Cancel</button>

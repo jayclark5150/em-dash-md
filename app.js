@@ -560,6 +560,15 @@ function closeDocBrowser() {
   document.getElementById('doc-browser-modal').classList.remove('open');
 }
 
+function sortDocs(docs, sort) {
+  switch (sort) {
+    case 'oldest':  return [...docs].sort((a, b) => tsToMs(a.updatedAt) - tsToMs(b.updatedAt));
+    case 'name-az': return [...docs].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    case 'name-za': return [...docs].sort((a, b) => (b.title || '').localeCompare(a.title || ''));
+    default:        return docs; // newest — already sorted by Firestore
+  }
+}
+
 async function renderDocBrowserList(query) {
   const list = document.getElementById('doc-browser-list');
   list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading…</div>';
@@ -578,6 +587,7 @@ async function renderDocBrowserList(query) {
     const q = query.toLowerCase();
     docs = docs.filter(d => (d.title || '').toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q));
   }
+  docs = sortDocs(docs, document.getElementById('doc-browser-sort').value);
   if (!docs.length) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">' + (query ? 'No matching documents' : 'No saved documents yet') + '</div>';
     return;
@@ -706,6 +716,9 @@ document.getElementById('recent-btn').addEventListener('click', openDocBrowser);
 document.getElementById('doc-browser-cancel').addEventListener('click', closeDocBrowser);
 document.getElementById('doc-browser-search').addEventListener('input', (e) => {
   renderDocBrowserList(e.target.value);
+});
+document.getElementById('doc-browser-sort').addEventListener('change', () => {
+  renderDocBrowserList(document.getElementById('doc-browser-search').value);
 });
 document.getElementById('doc-browser-modal').addEventListener('click', (e) => {
   if (e.target === document.getElementById('doc-browser-modal')) closeDocBrowser();
