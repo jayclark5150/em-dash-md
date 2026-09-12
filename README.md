@@ -109,6 +109,15 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.15.5
+- Word goal: click the word count in the status bar to set a target; turns accent color when met; persists across sessions
+
+### v3.15.4
+- Document browser now shows a count in the footer ("N documents", or "N of M" when searching)
+
+### v3.15.3
+- Document browser sort: Newest, Oldest, A-Z, Z-A controls added next to the search box
+
 ### v3.15.2
 - Rename and Duplicate added to the ellipsis menu
 
