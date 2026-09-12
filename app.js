@@ -10,11 +10,12 @@ function tsToMs(ts) {
   return typeof ts === 'number' ? ts : Date.now();
 }
 
-async function fsGetAll() {
-  const snap = await db.collection('documents')
+async function fsGetAll(max) {
+  let q = db.collection('documents')
     .where('userId', '==', auth.currentUser.uid)
-    .orderBy('updatedAt', 'desc')
-    .get();
+    .orderBy('updatedAt', 'desc');
+  if (max) q = q.limit(max);
+  const snap = await q.get();
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -24,14 +25,13 @@ async function fsGet(id) {
   return { id: snap.id, ...snap.data() };
 }
 
-async function fsPut(id, title, content) {
+async function fsPut(id, title, content, isNew) {
   const now = firebase.firestore.FieldValue.serverTimestamp();
   const ref = db.collection('documents').doc(id);
-  const snap = await ref.get();
-  if (snap.exists) {
-    await ref.update({ title, content, updatedAt: now });
-  } else {
+  if (isNew) {
     await ref.set({ userId: auth.currentUser.uid, title, content, createdAt: now, updatedAt: now });
+  } else {
+    await ref.update({ title, content, updatedAt: now });
   }
 }
 
@@ -143,10 +143,15 @@ document.getElementById('auth-google-btn').addEventListener('click', async () =>
   try {
     await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
   } catch (err) {
-    if (err.code !== 'auth/popup-closed-by-user') {
+    if (err.code === 'auth/popup-blocked') {
+      // Popup was blocked — fall back to redirect
+      await auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
+    } else if (err.code !== 'auth/popup-closed-by-user') {
       setAuthError(friendlyAuthError(err.code));
+      setAuthLoading(false);
+    } else {
+      setAuthLoading(false);
     }
-    setAuthLoading(false);
   }
 });
 
@@ -169,6 +174,14 @@ document.getElementById('auth-password2').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('auth-submit-btn').click();
 });
 
+// ── Handle Google redirect return ─────────────────────────────────────────────
+auth.getRedirectResult().catch((err) => {
+  if (err.code && err.code !== 'auth/popup-closed-by-user') {
+    setAuthError(friendlyAuthError(err.code));
+    setAuthLoading(false);
+  }
+});
+
 // ── Auth state gate ───────────────────────────────────────────────────────────
 let appBooted = false;
 
@@ -183,6 +196,8 @@ auth.onAuthStateChanged(async (user) => {
   } else {
     showAuthOverlay();
     setAuthModeUI('signin');
+    clearTimeout(autoSaveTimer);
+    currentDocIsNew = true;
     currentDocId = null;
     isDirty      = false;
     editor.value = '';
@@ -195,6 +210,7 @@ auth.onAuthStateChanged(async (user) => {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentDocId   = null;
+let currentDocIsNew = true; // true until the doc has been written to Firestore at least once
 let currentTitle   = 'New Document';
 let isDirty        = false;
 let autoSaveTimer  = null;
@@ -323,11 +339,23 @@ function updateCursor() {
     `Ln ${lines.length}, Col ${lines[lines.length - 1].length + 1}`;
 }
 
+// Coalesce the expensive re-render/re-sanitize/line-number-rebuild work to at
+// most once per animation frame, so a fast typing burst or a large paste
+// doesn't re-do this full-document work on every single keystroke.
+let renderRaf = null;
+function scheduleRender() {
+  if (renderRaf) return;
+  renderRaf = requestAnimationFrame(() => {
+    renderRaf = null;
+    renderPreview();
+    updateStats();
+    updateLineNumbers();
+  });
+}
+
 editor.addEventListener('input', () => {
   isDirty = true;
-  renderPreview();
-  updateStats();
-  updateLineNumbers();
+  scheduleRender();
   scheduleAutoSave();
 });
 editor.addEventListener('click',  updateCursor);
@@ -437,14 +465,18 @@ async function performSave(silent = false) {
   if (!auth.currentUser) return;
   const content = editor.value;
   const title   = currentTitle || 'Untitled';
+  showSaveStatus('Saving…');
   try {
-    if (!currentDocId) currentDocId = crypto.randomUUID();
-    await fsPut(currentDocId, title, content);
+    if (!currentDocId) { currentDocId = crypto.randomUUID(); currentDocIsNew = true; }
+    await fsPut(currentDocId, title, content, currentDocIsNew);
+    currentDocIsNew = false;
     isDirty = false;
-    if (!silent) showSaveStatus('Saved');
+    showSaveStatus('Saved');
   } catch (err) {
     console.error('Save failed:', err);
-    if (!silent) showToast('Save failed');
+    showSaveStatus('Save failed');
+    if (!silent) showToast('Save failed — check console for details');
+    else showToast('Auto-save failed');
   }
 }
 
@@ -473,6 +505,8 @@ document.getElementById('new-filename').addEventListener('keydown', (e) => {
 
 function createNewDoc() {
   if (isDirty && !confirm('You have unsaved changes. Create a new document anyway?')) return;
+  clearTimeout(autoSaveTimer);
+  currentDocIsNew = true;
   currentDocId = null;
   isDirty      = false;
   editor.value = '';
@@ -507,7 +541,10 @@ async function renderDocBrowserList(query) {
   list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading…</div>';
   let docs;
   try {
-    docs = await fsGetAll();
+    // Soft cap so the doc browser can't blow up on read cost/bandwidth as
+    // the library grows; a real fix would split out a lightweight metadata
+    // collection instead of always fetching full content.
+    docs = await fsGetAll(300);
   } catch (err) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Error loading documents</div>';
     console.error('renderDocBrowserList:', err);
@@ -541,7 +578,9 @@ async function loadDoc(id) {
   if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
   const doc = await fsGet(id);
   if (!doc) { showToast('Document not found'); return; }
+  clearTimeout(autoSaveTimer);
   currentDocId = doc.id;
+  currentDocIsNew = false;
   editor.value = doc.content || '';
   setTitle(doc.title || 'Untitled');
   isDirty = false;
@@ -553,7 +592,9 @@ async function loadDoc(id) {
 
 async function loadMostRecent() {
   try {
-    const docs = await fsGetAll();
+    // Only need the single newest doc here — no reason to pull every
+    // document's full content just to find it.
+    const docs = await fsGetAll(1);
     if (docs.length) await loadDoc(docs[0].id);
   } catch (err) {
     console.error('loadMostRecent:', err);
@@ -566,6 +607,7 @@ async function deleteCurrentDoc() {
   if (!confirm(`Delete "${currentTitle}"? This cannot be undone.`)) return;
   try {
     await fsDelete(currentDocId);
+    clearTimeout(autoSaveTimer);
     currentDocId = null;
     isDirty      = false;
     editor.value = '';
@@ -1088,7 +1130,7 @@ document.getElementById('import-file-input').addEventListener('change', async (e
   for (const file of files) {
     try {
       const text = await file.text();
-      await fsPut(crypto.randomUUID(), file.name, text);
+      await fsPut(crypto.randomUUID(), file.name, text, true);
       succeeded++;
     } catch (err) {
       failed.push(file.name);
@@ -1209,6 +1251,10 @@ async function exportAsDocx() {
       await new Promise((resolve, reject) => {
         const s = document.createElement('script');
         s.src = 'https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js';
+        // Same SRI protection as every other CDN script in index.html —
+        // a compromised/altered CDN response won't execute silently.
+        s.integrity   = 'sha384-TtrQp5nveof/QP1+f/OLiEHL3GuOIRyl3IfsGxu5X45VO2vHeT4HRNmQuTR3Ea3w';
+        s.crossOrigin = 'anonymous';
         s.onload = resolve; s.onerror = reject;
         document.head.appendChild(s);
       });
@@ -1291,6 +1337,8 @@ async function bootApp() {
   await loadMostRecent();
 
   if (new URLSearchParams(window.location.search).get('new') === '1') {
+    clearTimeout(autoSaveTimer);
+    currentDocIsNew = true;
     currentDocId = null;
     isDirty      = false;
     editor.value = '';

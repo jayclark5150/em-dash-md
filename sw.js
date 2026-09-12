@@ -34,15 +34,29 @@ const CACHEABLE_ORIGINS = [
 ];
 
 self.addEventListener('fetch', (e) => {
-  // Only handle GET; let the network deal with everything else.
   if (e.request.method !== 'GET') return;
+
+  const url = new URL(e.request.url);
+
+  // Never intercept Firebase auth redirects or Firestore/API calls.
+  if (url.hostname.includes('firebaseapp.com') ||
+      url.hostname.includes('googleapis.com') ||
+      url.hostname.includes('firebaseio.com') ||
+      url.pathname.includes('/__/auth/')) return;
+
+  // For HTML navigation requests go network-first so Firebase redirect
+  // results are always fresh. Fall back to cache only when offline.
+  if (e.request.mode === 'navigate') {
+    e.respondWith(
+      fetch(e.request).catch(() => caches.match('/index.html'))
+    );
+    return;
+  }
 
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
       return fetch(e.request).then(response => {
-        const url = new URL(e.request.url);
-        // Cache only successful, same-origin or allowlisted-CDN, non-opaque responses.
         if (response.ok &&
             response.type !== 'opaque' &&
             CACHEABLE_ORIGINS.includes(url.origin)) {

@@ -6,3 +6,4 @@ markdown-pwa/
 .vscode/
 .DS_Store
 firebase-config.js
+.firebase/
