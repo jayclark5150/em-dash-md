@@ -430,13 +430,15 @@ function showSaveStatus(msg) {
 }
 
 // ── Title editing ─────────────────────────────────────────────────────────────
-tbTitle.addEventListener('click', () => {
+function startRename() {
   titleInput.value = currentTitle;
   tbTitle.style.display = 'none';
   titleInput.style.display = 'inline-block';
   titleInput.focus();
   titleInput.select();
-});
+}
+
+tbTitle.addEventListener('click', startRename);
 
 titleInput.addEventListener('blur', commitTitle);
 titleInput.addEventListener('keydown', (e) => {
@@ -629,6 +631,27 @@ async function loadMostRecent() {
     }
   } catch (err) {
     console.error('loadMostRecent:', err);
+  }
+}
+
+// ── Duplicate ─────────────────────────────────────────────────────────────────
+async function duplicateCurrentDoc() {
+  if (!auth.currentUser) return;
+  const newId    = crypto.randomUUID();
+  const base     = (currentTitle || 'untitled').replace(/\.(md|txt)$/i, '');
+  const newTitle = base + ' copy.md';
+  const content  = editor.value;
+  try {
+    await fsPut(newId, newTitle, content, true);
+    currentDocId    = newId;
+    currentDocIsNew = false;
+    isDirty         = false;
+    setTitle(newTitle);
+    document.getElementById('drive-delete-btn').style.display = 'inline-flex';
+    showToast(`Duplicated as "${newTitle}"`);
+  } catch (err) {
+    showToast('Duplicate failed');
+    console.error('duplicateCurrentDoc:', err);
   }
 }
 
@@ -1347,6 +1370,16 @@ document.getElementById('hdr-more-btn').addEventListener('click', (e) => {
   e.stopPropagation();
   document.getElementById('hdr-more-menu').classList.toggle('open');
 });
+document.getElementById('hdr-rename-btn').addEventListener('click', () => {
+  document.getElementById('hdr-more-menu').classList.remove('open');
+  startRename();
+});
+
+document.getElementById('hdr-duplicate-btn').addEventListener('click', () => {
+  document.getElementById('hdr-more-menu').classList.remove('open');
+  duplicateCurrentDoc();
+});
+
 document.getElementById('hdr-focus-mode').addEventListener('click', () => {
   toggleFocusMode();
   document.getElementById('hdr-more-menu').classList.remove('open');
