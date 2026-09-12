@@ -5,3 +5,4 @@ markdown-pwa/
 *.code-workspace
 .vscode/
 .DS_Store
+firebase-config.js

@@ -1,63 +1,197 @@
-// ── IndexedDB storage ─────────────────────────────────────────────────────────
-const DB_NAME    = 'em-dash-md';
-const DB_VERSION = 1;
-const STORE      = 'documents';
+// ── Firebase ──────────────────────────────────────────────────────────────────
+firebase.initializeApp(FIREBASE_CONFIG);
+const db   = firebase.firestore();
+const auth = firebase.auth();
 
-function dbOpen() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = e => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: 'id' });
-        store.createIndex('updatedAt', 'updatedAt');
-        store.createIndex('title', 'title');
-      }
-    };
-    req.onsuccess = e => resolve(e.target.result);
-    req.onerror   = e => reject(e.target.error);
-  });
+// ── Firestore helpers ─────────────────────────────────────────────────────────
+function tsToMs(ts) {
+  if (!ts) return Date.now();
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  return typeof ts === 'number' ? ts : Date.now();
 }
 
-async function dbGetAll() {
-  const db = await dbOpen();
-  return new Promise((resolve, reject) => {
-    const tx  = db.transaction(STORE, 'readonly');
-    const req = tx.objectStore(STORE).index('updatedAt').getAll();
-    req.onsuccess = e => resolve(e.target.result.reverse());
-    req.onerror   = e => reject(e.target.error);
-  });
+async function fsGetAll() {
+  const snap = await db.collection('documents')
+    .where('userId', '==', auth.currentUser.uid)
+    .orderBy('updatedAt', 'desc')
+    .get();
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function dbGet(id) {
-  const db = await dbOpen();
-  return new Promise((resolve, reject) => {
-    const tx  = db.transaction(STORE, 'readonly');
-    const req = tx.objectStore(STORE).get(id);
-    req.onsuccess = e => resolve(e.target.result);
-    req.onerror   = e => reject(e.target.error);
-  });
+async function fsGet(id) {
+  const snap = await db.collection('documents').doc(id).get();
+  if (!snap.exists) return null;
+  return { id: snap.id, ...snap.data() };
 }
 
-async function dbPut(doc) {
-  const db = await dbOpen();
-  return new Promise((resolve, reject) => {
-    const tx  = db.transaction(STORE, 'readwrite');
-    const req = tx.objectStore(STORE).put(doc);
-    req.onsuccess = e => resolve(e.target.result);
-    req.onerror   = e => reject(e.target.error);
-  });
+async function fsPut(id, title, content) {
+  const now = firebase.firestore.FieldValue.serverTimestamp();
+  const ref = db.collection('documents').doc(id);
+  const snap = await ref.get();
+  if (snap.exists) {
+    await ref.update({ title, content, updatedAt: now });
+  } else {
+    await ref.set({ userId: auth.currentUser.uid, title, content, createdAt: now, updatedAt: now });
+  }
 }
 
-async function dbDelete(id) {
-  const db = await dbOpen();
-  return new Promise((resolve, reject) => {
-    const tx  = db.transaction(STORE, 'readwrite');
-    const req = tx.objectStore(STORE).delete(id);
-    req.onsuccess = () => resolve();
-    req.onerror   = e => reject(e.target.error);
-  });
+async function fsDelete(id) {
+  await db.collection('documents').doc(id).delete();
 }
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+let authMode = 'signin';
+
+function showAuthOverlay() {
+  document.getElementById('auth-overlay').classList.remove('hidden');
+  document.getElementById('signout-btn').style.display = 'none';
+}
+
+function hideAuthOverlay() {
+  document.getElementById('auth-overlay').classList.add('hidden');
+  document.getElementById('signout-btn').style.display = '';
+}
+
+function setAuthError(msg) {
+  const el = document.getElementById('auth-error');
+  el.textContent = msg;
+  el.style.display = msg ? '' : 'none';
+}
+
+function setAuthLoading(on) {
+  document.getElementById('auth-submit-btn').disabled = on;
+  document.getElementById('auth-google-btn').disabled = on;
+}
+
+function setAuthModeUI(mode) {
+  authMode = mode;
+  const p2        = document.getElementById('auth-password2');
+  const submitBtn = document.getElementById('auth-submit-btn');
+  const toggle    = document.getElementById('auth-mode-toggle');
+  if (mode === 'signup') {
+    submitBtn.textContent = 'Create Account';
+    p2.style.display      = '';
+    toggle.textContent    = 'Already have an account? Sign in';
+  } else {
+    submitBtn.textContent = 'Sign In';
+    p2.style.display      = 'none';
+    toggle.textContent    = "Don't have an account? Create one";
+  }
+  setAuthError('');
+}
+
+function friendlyAuthError(code) {
+  const map = {
+    'auth/invalid-email':          'Invalid email address.',
+    'auth/user-not-found':         'No account found with this email.',
+    'auth/wrong-password':         'Incorrect password.',
+    'auth/invalid-credential':     'Incorrect email or password.',
+    'auth/email-already-in-use':   'An account with this email already exists.',
+    'auth/weak-password':          'Password must be at least 6 characters.',
+    'auth/too-many-requests':      'Too many attempts. Try again later.',
+    'auth/network-request-failed': 'Network error — check your connection.',
+  };
+  return map[code] || 'Sign-in failed. Please try again.';
+}
+
+document.getElementById('auth-mode-toggle').addEventListener('click', () => {
+  setAuthModeUI(authMode === 'signin' ? 'signup' : 'signin');
+});
+
+document.getElementById('auth-forgot-btn').addEventListener('click', async () => {
+  const email = document.getElementById('auth-email').value.trim();
+  if (!email) { setAuthError('Enter your email address first.'); return; }
+  setAuthLoading(true);
+  try {
+    await auth.sendPasswordResetEmail(email);
+    setAuthError('');
+    showToast('Password reset email sent');
+  } catch (err) {
+    setAuthError(friendlyAuthError(err.code));
+  } finally {
+    setAuthLoading(false);
+  }
+});
+
+document.getElementById('auth-submit-btn').addEventListener('click', async () => {
+  const email = document.getElementById('auth-email').value.trim();
+  const pw    = document.getElementById('auth-password').value;
+  const pw2   = document.getElementById('auth-password2').value;
+  setAuthError('');
+  if (!email || !pw) { setAuthError('Email and password are required.'); return; }
+  if (authMode === 'signup') {
+    if (pw !== pw2)  { setAuthError('Passwords do not match.'); return; }
+    if (pw.length < 6) { setAuthError('Password must be at least 6 characters.'); return; }
+  }
+  setAuthLoading(true);
+  try {
+    if (authMode === 'signup') {
+      await auth.createUserWithEmailAndPassword(email, pw);
+    } else {
+      await auth.signInWithEmailAndPassword(email, pw);
+    }
+    // onAuthStateChanged handles the rest
+  } catch (err) {
+    setAuthError(friendlyAuthError(err.code));
+    setAuthLoading(false);
+  }
+});
+
+document.getElementById('auth-google-btn').addEventListener('click', async () => {
+  setAuthError('');
+  setAuthLoading(true);
+  try {
+    await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  } catch (err) {
+    if (err.code !== 'auth/popup-closed-by-user') {
+      setAuthError(friendlyAuthError(err.code));
+    }
+    setAuthLoading(false);
+  }
+});
+
+document.getElementById('signout-btn').addEventListener('click', async () => {
+  if (isDirty) await performSave(true);
+  await auth.signOut();
+});
+
+// Also wire Enter key on auth inputs
+document.getElementById('auth-email').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('auth-password').focus();
+});
+document.getElementById('auth-password').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    if (authMode === 'signup') document.getElementById('auth-password2').focus();
+    else document.getElementById('auth-submit-btn').click();
+  }
+});
+document.getElementById('auth-password2').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('auth-submit-btn').click();
+});
+
+// ── Auth state gate ───────────────────────────────────────────────────────────
+let appBooted = false;
+
+auth.onAuthStateChanged(async (user) => {
+  if (user) {
+    hideAuthOverlay();
+    setAuthLoading(false);
+    if (!appBooted) {
+      appBooted = true;
+      bootApp();
+    }
+  } else {
+    showAuthOverlay();
+    setAuthModeUI('signin');
+    currentDocId = null;
+    isDirty      = false;
+    editor.value = '';
+    setTitle('New Document');
+    renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+    document.getElementById('drive-delete-btn').style.display = 'none';
+    appBooted = false;
+  }
+});
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let currentDocId   = null;
@@ -78,9 +212,6 @@ const toast          = document.getElementById('toast');
 if (window.marked && window.hljs) {
   marked.use({
     renderer: {
-      // marked 12 calls this with positional args (code, infostring); other
-      // versions pass a token object ({ text, lang }). Handle both, and never
-      // pass undefined to highlight.js.
       code(codeOrToken, infostring) {
         let text, lang;
         if (codeOrToken && typeof codeOrToken === 'object') {
@@ -100,8 +231,6 @@ if (window.marked && window.hljs) {
   });
 }
 
-// Harden links in sanitized output: any anchor that opens a new tab gets
-// rel="noopener noreferrer" so the target page can't reach back via window.opener.
 if (window.DOMPurify) {
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
     if (node.tagName === 'A' && node.hasAttribute('href')) {
@@ -124,14 +253,12 @@ function renderPreview() {
 }
 
 // ── Copy-to-clipboard button on fenced code blocks ────────────────────────────
-// Built via DOM APIs (not string concatenation into innerHTML) so this trusted
-// UI markup never has to pass through DOMPurify alongside untrusted content.
 const COPY_ICON_SVG  = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
 const CHECK_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
 
 function addCodeCopyButtons() {
   previewInner.querySelectorAll('pre').forEach((pre) => {
-    if (!pre.querySelector('code')) return; // skip raw <pre> blocks with no fenced code
+    if (!pre.querySelector('code')) return;
     const wrap = document.createElement('div');
     wrap.className = 'code-block';
     pre.parentNode.insertBefore(wrap, pre);
@@ -169,9 +296,6 @@ async function copyCodeBlock(text, btn) {
       document.body.removeChild(ta);
       if (!ok) throw new Error('execCommand copy failed');
     }
-    // Always reset to the fixed copy icon (never read back btn.innerHTML) and
-    // clear any pending revert so rapid re-clicks just restart the countdown
-    // instead of a stale timer stranding the button on the checkmark.
     btn.innerHTML = CHECK_ICON_SVG;
     btn.classList.add('copied');
     clearTimeout(btn._copyResetTimer);
@@ -215,7 +339,6 @@ function updateLineNumbers() {
   lineNumbers.innerHTML = Array.from({ length: lines }, (_, i) => i + 1).join('<br>');
 }
 
-// Sync scroll between line numbers, editor, and preview pane
 let scrollingEditor  = false;
 let scrollingPreview = false;
 
@@ -305,22 +428,18 @@ document.getElementById('zoom-reset-btn').addEventListener('click', () => { zoom
 
 // ── Auto-save ─────────────────────────────────────────────────────────────────
 function scheduleAutoSave() {
+  if (!auth.currentUser) return;
   clearTimeout(autoSaveTimer);
   autoSaveTimer = setTimeout(async () => { await performSave(true); }, 2000);
 }
 
 async function performSave(silent = false) {
+  if (!auth.currentUser) return;
   const content = editor.value;
   const title   = currentTitle || 'Untitled';
-  const now     = Date.now();
   try {
-    if (!currentDocId) {
-      currentDocId = crypto.randomUUID();
-      await dbPut({ id: currentDocId, title, content, createdAt: now, updatedAt: now });
-    } else {
-      const existing = await dbGet(currentDocId) || {};
-      await dbPut({ ...existing, id: currentDocId, title, content, updatedAt: now });
-    }
+    if (!currentDocId) currentDocId = crypto.randomUUID();
+    await fsPut(currentDocId, title, content);
     isDirty = false;
     if (!silent) showSaveStatus('Saved');
   } catch (err) {
@@ -385,21 +504,29 @@ function closeDocBrowser() {
 
 async function renderDocBrowserList(query) {
   const list = document.getElementById('doc-browser-list');
-  let docs = await dbGetAll();
+  list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading…</div>';
+  let docs;
+  try {
+    docs = await fsGetAll();
+  } catch (err) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Error loading documents</div>';
+    console.error('renderDocBrowserList:', err);
+    return;
+  }
   if (query) {
     const q = query.toLowerCase();
-    docs = docs.filter(d => d.title.toLowerCase().includes(q) || d.content.toLowerCase().includes(q));
+    docs = docs.filter(d => (d.title || '').toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q));
   }
   if (!docs.length) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">' + (query ? 'No matching documents' : 'No saved documents yet') + '</div>';
     return;
   }
   list.innerHTML = docs.map(d => {
-    const date    = new Date(d.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    const date    = new Date(tsToMs(d.updatedAt)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     const preview = esc((d.content || '').slice(0, 80).replace(/\n/g, ' '));
     return `<div class="file-item" data-id="${esc(d.id)}">
       <div style="flex:1;min-width:0">
-        <div class="file-name">${esc(d.title)}</div>
+        <div class="file-name">${esc(d.title || 'Untitled')}</div>
         <div class="file-date">${preview}</div>
       </div>
       <div class="file-date" style="margin-left:12px;white-space:nowrap">${esc(date)}</div>
@@ -412,7 +539,7 @@ async function renderDocBrowserList(query) {
 
 async function loadDoc(id) {
   if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
-  const doc = await dbGet(id);
+  const doc = await fsGet(id);
   if (!doc) { showToast('Document not found'); return; }
   currentDocId = doc.id;
   editor.value = doc.content || '';
@@ -425,22 +552,31 @@ async function loadDoc(id) {
 }
 
 async function loadMostRecent() {
-  const docs = await dbGetAll();
-  if (docs.length) await loadDoc(docs[0].id);
+  try {
+    const docs = await fsGetAll();
+    if (docs.length) await loadDoc(docs[0].id);
+  } catch (err) {
+    console.error('loadMostRecent:', err);
+  }
 }
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 async function deleteCurrentDoc() {
   if (!currentDocId) return;
   if (!confirm(`Delete "${currentTitle}"? This cannot be undone.`)) return;
-  await dbDelete(currentDocId);
-  currentDocId = null;
-  isDirty      = false;
-  editor.value = '';
-  setTitle('New Document');
-  renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
-  document.getElementById('drive-delete-btn').style.display = 'none';
-  showToast('Document deleted');
+  try {
+    await fsDelete(currentDocId);
+    currentDocId = null;
+    isDirty      = false;
+    editor.value = '';
+    setTitle('New Document');
+    renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+    document.getElementById('drive-delete-btn').style.display = 'none';
+    showToast('Document deleted');
+  } catch (err) {
+    showToast('Delete failed');
+    console.error('deleteCurrentDoc:', err);
+  }
 }
 
 document.getElementById('drive-delete-btn').addEventListener('click', deleteCurrentDoc);
@@ -477,12 +613,10 @@ editor.addEventListener('keydown', (e) => {
   e.preventDefault();
 
   if (content === '') {
-    // Empty list item — exit the list, remove prefix
     const newValue  = value.slice(0, lineStart) + '\n' + value.slice(lineStart + prefix.length);
     editor.value    = newValue;
     editor.setSelectionRange(lineStart + 1, lineStart + 1);
   } else {
-    // Continue list on next line
     let newPrefix;
     if (ordered) {
       newPrefix = ordered[1] + (parseInt(ordered[2], 10) + 1) + '. ';
@@ -589,7 +723,6 @@ let focusMode    = false;
 const focusOverlay = document.getElementById('focus-overlay');
 const focusWysiwyg = document.getElementById('focus-wysiwyg');
 
-// Turndown instance for HTML → Markdown on exit
 let td;
 function getTurndown() {
   if (!td && window.TurndownService) {
@@ -598,10 +731,8 @@ function getTurndown() {
   return td;
 }
 
-// ── Typewriter scrolling (focus mode) ────────────────────────────────────────
 function typewriterScroll() {
   if (!focusMode) return;
-  // Use a temporary invisible span to find the cursor's Y position in the textarea
   const ta = editor;
   const text = ta.value.substring(0, ta.selectionStart);
   const mirror = document.createElement('div');
@@ -636,7 +767,6 @@ function enterFocusMode() {
   if (document.documentElement.requestFullscreen) {
     document.documentElement.requestFullscreen().catch(() => {});
   }
-  // Render markdown into the WYSIWYG pane
   focusWysiwyg.innerHTML = (window.marked && window.DOMPurify)
     ? DOMPurify.sanitize(marked.parse(editor.value || ''))
     : editor.value;
@@ -644,7 +774,6 @@ function enterFocusMode() {
 }
 
 function exitFocusMode() {
-  // Convert WYSIWYG HTML back to markdown
   const turndown = getTurndown();
   if (turndown) {
     const md = turndown.turndown(focusWysiwyg.innerHTML);
@@ -666,14 +795,12 @@ function exitFocusMode() {
   editor.focus();
 }
 
-// Sanitize pasted content — strip rich HTML, keep plain text only
 focusWysiwyg.addEventListener('paste', (e) => {
   e.preventDefault();
   const text = e.clipboardData.getData('text/plain');
   document.execCommand('insertText', false, text);
 });
 
-// Live sync: keep editor.value up to date while editing in WYSIWYG
 let wysiwygSyncTimer;
 focusWysiwyg.addEventListener('input', () => {
   clearTimeout(wysiwygSyncTimer);
@@ -692,7 +819,6 @@ function toggleFocusMode() {
   focusMode ? exitFocusMode() : enterFocusMode();
 }
 
-// Exit focus mode if user presses Escape or browser exits fullscreen
 document.addEventListener('fullscreenchange', () => {
   if (!document.fullscreenElement && focusMode) exitFocusMode();
 });
@@ -703,7 +829,7 @@ document.getElementById('focus-exit-btn').addEventListener('click', exitFocusMod
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  if (mod && e.key === 's') { e.preventDefault(); performSave(false); }
+  if (mod && e.key === 's') { e.preventDefault(); if (auth.currentUser) performSave(false); }
   if (mod && e.key === 'n') { e.preventDefault(); if (!isDirty || confirm('Discard changes?')) openNewModal(); }
   if (mod && e.key === 'o') { e.preventDefault(); openDocBrowser(); }
   if (mod && e.shiftKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); toggleFocusMode(); return; }
@@ -747,7 +873,6 @@ window.addEventListener('beforeunload', (e) => {
   const divider      = document.getElementById('divider');
   const editorPane   = document.getElementById('editor-pane');
   const previewWrap  = document.getElementById('preview-wrapper');
-  const mainContent  = document.getElementById('main-content');
   let dragging = false, startX = 0, startEditorW = 0, startPreviewW = 0;
 
   divider.addEventListener('mousedown', (e) => {
@@ -793,7 +918,6 @@ function wrapSelection(before, after) {
   const selected = editor.value.slice(start, end);
   const newText  = before + selected + after;
   document.execCommand('insertText', false, newText);
-  // Reselect the inner content
   editor.setSelectionRange(start + before.length, start + before.length + selected.length);
   editor.dispatchEvent(new Event('input'));
   editor.focus();
@@ -824,7 +948,6 @@ function insertHeading(level) {
   const lineEnd   = editor.value.indexOf('\n', start);
   const end       = lineEnd === -1 ? editor.value.length : lineEnd;
   const line      = editor.value.slice(lineStart, end);
-  // Strip any existing heading prefix
   const stripped  = line.replace(/^#{1,6}\s*/, '');
   editor.focus();
   editor.setSelectionRange(lineStart, end);
@@ -859,7 +982,6 @@ document.getElementById('fmt-image-btn').addEventListener('click', () => {
   wrapSelection('![alt text](', ')');
 });
 
-// Heading dropdown
 document.getElementById('fmt-heading-btn').addEventListener('click', () => insertHeading(1));
 document.getElementById('fmt-heading-dd').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -873,7 +995,6 @@ document.getElementById('fmt-heading-menu').querySelectorAll('[data-level]').for
   });
 });
 
-// Code dropdown
 document.getElementById('fmt-code-dd').addEventListener('click', (e) => {
   e.stopPropagation();
   document.getElementById('fmt-code-menu').classList.toggle('open');
@@ -888,14 +1009,12 @@ document.getElementById('fmt-code-block').addEventListener('click', () => {
   document.getElementById('fmt-code-menu').classList.remove('open');
 });
 
-// Close dropdowns on outside click
 document.addEventListener('click', () => {
   document.getElementById('fmt-heading-menu').classList.remove('open');
   document.getElementById('fmt-code-menu').classList.remove('open');
   document.getElementById('hdr-more-menu').classList.remove('open');
 });
 
-// Keyboard shortcuts for formatting
 document.addEventListener('keydown', (e) => {
   if (document.activeElement !== editor) return;
   const mod = e.ctrlKey || e.metaKey;
@@ -955,9 +1074,6 @@ document.addEventListener('keydown', (e) => {
 })();
 
 // ── Import / Export ─────────────────────────────────────────────────────────
-// Import: pick a local .md/.txt file and save it to local storage.
-// Export: download the currently-open file as .md.
-
 document.getElementById('hdr-import-btn').addEventListener('click', () => {
   document.getElementById('hdr-more-menu').classList.remove('open');
   document.getElementById('import-file-input').click();
@@ -966,14 +1082,13 @@ document.getElementById('hdr-import-btn').addEventListener('click', () => {
 document.getElementById('import-file-input').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files);
   e.target.value = '';
-  if (!files.length) return;
+  if (!files.length || !auth.currentUser) return;
   let succeeded = 0;
   const failed  = [];
   for (const file of files) {
     try {
       const text = await file.text();
-      const now  = Date.now();
-      await dbPut({ id: crypto.randomUUID(), title: file.name, content: text, createdAt: now, updatedAt: now });
+      await fsPut(crypto.randomUUID(), file.name, text);
       succeeded++;
     } catch (err) {
       failed.push(file.name);
@@ -1028,12 +1143,12 @@ ul,ol{padding-left:1.8em;margin:0 0 .75em}li{margin:.2em 0}
 function htmlToRtf(html) {
   const wrap = document.createElement('div');
   wrap.innerHTML = DOMPurify.sanitize(html);
-  function esc(t) {
+  function escRtf(t) {
     return t.replace(/\\/g, '\\\\').replace(/\{/g, '\\{').replace(/\}/g, '\\}')
             .replace(/[^\x00-\x7F]/g, c => `\\u${c.charCodeAt(0)}?`);
   }
   function walk(node) {
-    if (node.nodeType === Node.TEXT_NODE) return esc(node.textContent);
+    if (node.nodeType === Node.TEXT_NODE) return escRtf(node.textContent);
     if (node.nodeType !== Node.ELEMENT_NODE) return '';
     const tag = node.tagName.toLowerCase();
     const inner = () => Array.from(node.childNodes).map(walk).join('');
@@ -1166,22 +1281,21 @@ document.getElementById('hdr-focus-mode').addEventListener('click', () => {
   });
 })();
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-renderPreview();
-updateStats();
-updateCursor();
-updateLineNumbers();
-applyZoom();
-loadMostRecent();
+// ── Boot (runs after successful auth) ─────────────────────────────────────────
+async function bootApp() {
+  renderPreview();
+  updateStats();
+  updateCursor();
+  updateLineNumbers();
+  applyZoom();
+  await loadMostRecent();
 
-// Launched via the "New Document" home-screen/app shortcut (manifest.json ->
-// shortcuts[0].url = "/?new=1"). Reset to a blank untitled document and strip
-// the query param so a later reload of this tab doesn't re-trigger it.
-if (new URLSearchParams(window.location.search).get('new') === '1') {
-  currentDocId = null;
-  isDirty      = false;
-  editor.value = '';
-  setTitle('New Document');
-  renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
-  window.history.replaceState({}, '', window.location.pathname);
+  if (new URLSearchParams(window.location.search).get('new') === '1') {
+    currentDocId = null;
+    isDirty      = false;
+    editor.value = '';
+    setTitle('New Document');
+    renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+    window.history.replaceState({}, '', window.location.pathname);
+  }
 }

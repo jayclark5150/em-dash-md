@@ -852,3 +852,109 @@ body.theme-light .btn-secondary { background: #efefef; }
 @media (max-width: 380px) {
   .hdr-center { display: none; }
 }
+
+/* ── Auth overlay — blocks UI until signed in ── */
+#auth-overlay {
+  display: flex;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0,0,0,.55);
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+#auth-overlay.hidden { display: none; }
+
+.auth-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 36px 32px 28px;
+  width: 380px;
+  max-width: 94vw;
+  box-shadow: 0 24px 64px rgba(0,0,0,.28);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-logo {
+  font-size: 22px;
+  font-weight: 700;
+  color: #111111;
+  letter-spacing: -.5px;
+  text-align: center;
+}
+
+.auth-tagline {
+  font-size: 13px;
+  color: #666666;
+  text-align: center;
+  margin-top: -4px;
+}
+
+.auth-error {
+  background: rgba(207,34,46,.08);
+  color: #cf222e;
+  border: 1px solid rgba(207,34,46,.2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #aaaaaa;
+  font-size: 12px;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e0e0e0;
+}
+
+.auth-google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 16px;
+  background: #ffffff;
+  border: 1px solid #dadce0;
+  border-radius: 6px;
+  color: #3c4043;
+  font-size: 14px;
+  font-weight: 500;
+  font-family: var(--font);
+  cursor: pointer;
+  transition: background .15s, box-shadow .15s;
+}
+.auth-google-btn:hover { background: #f8f9fa; box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+.auth-google-btn:disabled { opacity: .6; cursor: default; }
+
+.auth-footer {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.auth-link {
+  background: none;
+  border: none;
+  color: #d97757;
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  padding: 0;
+  line-height: 1.4;
+}
+.auth-link:hover { text-decoration: underline; }
