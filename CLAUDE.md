@@ -41,8 +41,10 @@ firebase deploy        # deploys to Firebase Hosting
 - **Auth state gate** — `auth.onAuthStateChanged` is the single entry point; it calls `bootApp()` on first sign-in. Auth overlay covers the app until signed in; signed-out state shows a README preview.
 - **State** — four module-level vars track editor state: `currentDocId`, `currentDocIsNew`, `currentTitle`, `isDirty`.
 - **Render pipeline** — `scheduleRender()` debounces to one `requestAnimationFrame` per burst; it calls `renderPreview()` (marked → DOMPurify → innerHTML), `updateStats()`, and `updateLineNumbers()`.
+- **Toast** — `showToast(msg, duration, action)` accepts an optional `action: { label, fn }` to render a clickable button inside the toast. When an action is present, the toast uses `pointer-events: auto`.
 - **Auto-save** — 2-second debounce via `scheduleAutoSave()` / `performSave()`. `currentDocIsNew` tracks whether to call `ref.set()` (create) or `ref.update()`.
 - **Focus mode** — full-screen WYSIWYG using a `contenteditable` div (`#focus-wysiwyg`). On exit, Turndown converts the HTML back to Markdown and diffs against `editor.value` before writing.
+- **Delete/undo** — `deleteCurrentDoc()` clears the UI immediately, then uses a 5-second `setTimeout` before calling `fsDelete`. A `showToast` action button sets a closed-over `undone` flag to cancel the delete. Each deletion is independent; no shared timer variable.
 - **Service worker** (`sw.js`) — caches static assets and CDN libs. Cache name is `em-dash-md-v2`; bump this constant when deploying breaking changes to force old caches to clear.
 
 ## Firestore data model
