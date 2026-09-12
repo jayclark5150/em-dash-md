@@ -414,6 +414,8 @@ body {
   outline: none;
   resize: none;
   padding: 20px 24px;
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
   font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
   font-size: 16px;
   line-height: 1.7;
@@ -443,6 +445,8 @@ body {
   background: var(--bg);
   word-wrap: break-word;
   overflow-wrap: break-word;
+  will-change: scroll-position;
+  -webkit-overflow-scrolling: touch;
 }
 
 #preview-inner {

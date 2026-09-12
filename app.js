@@ -205,6 +205,7 @@ auth.onAuthStateChanged(async (user) => {
     renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
     document.getElementById('drive-delete-btn').style.display = 'none';
     appBooted = false;
+    loadReadmePreview();
   }
 });
 
@@ -369,24 +370,32 @@ function updateLineNumbers() {
 
 let scrollingEditor  = false;
 let scrollingPreview = false;
+let editorSyncRaf    = null;
+let previewSyncRaf   = null;
 
 editor.addEventListener('scroll', () => {
   lineNumbers.scrollTop = editor.scrollTop;
-  if (scrollingPreview) return;
-  scrollingEditor = true;
-  const ratio = editor.scrollTop / Math.max(1, editor.scrollHeight - editor.clientHeight);
-  previewPane.scrollTop = ratio * (previewPane.scrollHeight - previewPane.clientHeight);
-  requestAnimationFrame(() => { scrollingEditor = false; });
-});
+  if (scrollingPreview || editorSyncRaf) return;
+  editorSyncRaf = requestAnimationFrame(() => {
+    editorSyncRaf = null;
+    scrollingEditor = true;
+    const ratio = editor.scrollTop / Math.max(1, editor.scrollHeight - editor.clientHeight);
+    previewPane.scrollTop = ratio * (previewPane.scrollHeight - previewPane.clientHeight);
+    requestAnimationFrame(() => { scrollingEditor = false; });
+  });
+}, { passive: true });
 
 previewPane.addEventListener('scroll', () => {
-  if (scrollingEditor) return;
-  scrollingPreview = true;
-  const ratio = previewPane.scrollTop / Math.max(1, previewPane.scrollHeight - previewPane.clientHeight);
-  editor.scrollTop = ratio * (editor.scrollHeight - editor.clientHeight);
-  lineNumbers.scrollTop = editor.scrollTop;
-  requestAnimationFrame(() => { scrollingPreview = false; });
-});
+  if (scrollingEditor || previewSyncRaf) return;
+  previewSyncRaf = requestAnimationFrame(() => {
+    previewSyncRaf = null;
+    scrollingPreview = true;
+    const ratio = previewPane.scrollTop / Math.max(1, previewPane.scrollHeight - previewPane.clientHeight);
+    editor.scrollTop = ratio * (editor.scrollHeight - editor.clientHeight);
+    lineNumbers.scrollTop = editor.scrollTop;
+    requestAnimationFrame(() => { scrollingPreview = false; });
+  });
+}, { passive: true });
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
 let toastTimer;
@@ -595,7 +604,16 @@ async function loadMostRecent() {
     // Only need the single newest doc here — no reason to pull every
     // document's full content just to find it.
     const docs = await fsGetAll(1);
-    if (docs.length) await loadDoc(docs[0].id);
+    if (docs.length) {
+      await loadDoc(docs[0].id);
+    } else {
+      // No saved docs — clear the pre-login README so the user starts fresh.
+      editor.value = '';
+      currentDocId = null;
+      currentDocIsNew = true;
+      setTitle('New Document');
+      renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+    }
   } catch (err) {
     console.error('loadMostRecent:', err);
   }
@@ -1326,6 +1344,18 @@ document.getElementById('hdr-focus-mode').addEventListener('click', () => {
     applyTheme(next);
   });
 })();
+
+// ── README preview (shown to logged-out visitors behind the auth overlay) ─────
+async function loadReadmePreview() {
+  try {
+    const res = await fetch('README.md');
+    if (!res.ok) return;
+    editor.value = await res.text();
+    renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+  } catch (e) {
+    // silently ignore — editor stays blank
+  }
+}
 
 // ── Boot (runs after successful auth) ─────────────────────────────────────────
 async function bootApp() {
