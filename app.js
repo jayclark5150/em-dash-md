@@ -583,11 +583,18 @@ async function renderDocBrowserList(query) {
     console.error('renderDocBrowserList:', err);
     return;
   }
+  const total = docs.length;
   if (query) {
     const q = query.toLowerCase();
     docs = docs.filter(d => (d.title || '').toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q));
   }
   docs = sortDocs(docs, document.getElementById('doc-browser-sort').value);
+  const countEl = document.getElementById('doc-browser-count');
+  if (query && docs.length !== total) {
+    countEl.textContent = `${docs.length} of ${total} document${total !== 1 ? 's' : ''}`;
+  } else {
+    countEl.textContent = `${total} document${total !== 1 ? 's' : ''}`;
+  }
   if (!docs.length) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">' + (query ? 'No matching documents' : 'No saved documents yet') + '</div>';
     return;
