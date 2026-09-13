@@ -180,6 +180,7 @@ document.getElementById('signout-btn').addEventListener('click', async () => {
 
 // ── Delete account ────────────────────────────────────────────────────────────
 async function openDeleteAccountModal() {
+  if (!auth.currentUser) return;
   document.getElementById('hdr-more-menu').classList.remove('open');
   const modal       = document.getElementById('delete-account-modal');
   const confirmInput = document.getElementById('delete-account-confirm-input');
@@ -210,6 +211,7 @@ async function openDeleteAccountModal() {
 }
 
 function closeDeleteAccountModal() {
+  if (deletionInProgress) return;
   document.getElementById('delete-account-modal').classList.remove('open');
 }
 
@@ -238,9 +240,10 @@ async function deleteAllUserDocs(uid) {
 
 document.getElementById('delete-account-confirm-btn').addEventListener('click', async () => {
   const confirmInput = document.getElementById('delete-account-confirm-input');
-  const errorEl       = document.getElementById('delete-account-error');
-  const confirmBtn    = document.getElementById('delete-account-confirm-btn');
-  const pwInput       = document.getElementById('delete-account-password-input');
+  const errorEl      = document.getElementById('delete-account-error');
+  const confirmBtn   = document.getElementById('delete-account-confirm-btn');
+  const cancelBtn    = document.getElementById('delete-account-cancel');
+  const pwInput      = document.getElementById('delete-account-password-input');
 
   errorEl.style.display = 'none';
   if (confirmInput.value !== 'DELETE') return;
@@ -250,9 +253,18 @@ document.getElementById('delete-account-confirm-btn').addEventListener('click', 
 
   confirmBtn.disabled = true;
   confirmBtn.textContent = 'Deleting…';
+  cancelBtn.disabled = true;
+  deletionInProgress = true;
 
+  const resetUI = () => {
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'Delete My Account';
+    cancelBtn.disabled = false;
+    deletionInProgress = false;
+  };
+
+  // Step 1: re-authenticate (separate catch so reauth errors don't imply data was touched)
   try {
-    // Firebase requires a recent sign-in before it will allow account deletion.
     const isPasswordUser = (user.providerData || []).some(p => p.providerId === 'password');
     if (isPasswordUser) {
       if (!pwInput.value) throw { code: 'auth/missing-password' };
@@ -261,25 +273,32 @@ document.getElementById('delete-account-confirm-btn').addEventListener('click', 
     } else {
       await user.reauthenticateWithPopup(new firebase.auth.GoogleAuthProvider());
     }
-
-    await deleteAllUserDocs(user.uid);
-    await user.delete();
-
-    closeDeleteAccountModal();
-    showToast('Account deleted');
-    // user.delete() fires onAuthStateChanged(null), which returns the app to the sign-in screen.
-  } catch (err) {
+  } catch (reauthErr) {
     const msg = {
       'auth/wrong-password':         'Incorrect password.',
       'auth/missing-password':       'Enter your password to confirm.',
       'auth/requires-recent-login':  'Please sign out, sign back in, and try again.',
       'auth/popup-closed-by-user':   'Re-authentication was cancelled.',
       'auth/network-request-failed': 'Network error — check your connection.',
-    }[err.code] || 'Could not delete account. Please try again.';
+    }[reauthErr.code] || 'Could not verify your identity. Please try again.';
     errorEl.textContent = msg;
     errorEl.style.display = '';
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = 'Delete My Account';
+    resetUI();
+    return;
+  }
+
+  // Step 2: delete documents then account
+  try {
+    await deleteAllUserDocs(user.uid);
+    await user.delete();
+    // user.delete() fires onAuthStateChanged(null), which returns the app to the sign-in screen.
+    deletionInProgress = false;
+    closeDeleteAccountModal();
+    showToast('Account deleted');
+  } catch (deleteErr) {
+    errorEl.textContent = 'Could not fully delete account. It is safe to retry — any already-deleted documents will not be re-created.';
+    errorEl.style.display = '';
+    resetUI();
   }
 });
 
@@ -307,12 +326,14 @@ auth.getRedirectResult().catch((err) => {
 
 // ── Auth state gate ───────────────────────────────────────────────────────────
 let appBooted = false;
+let pendingAuthError = '';
+let deletionInProgress = false;
 
 auth.onAuthStateChanged(async (user) => {
   if (user) {
     if (!user.email || !user.email.endsWith('@michaelson-clark.com')) {
+      pendingAuthError = 'Access is restricted to @michaelson-clark.com accounts.';
       await auth.signOut();
-      setAuthError('Access is restricted to @michaelson-clark.com accounts.');
       setAuthLoading(false);
       return;
     }
@@ -324,7 +345,8 @@ auth.onAuthStateChanged(async (user) => {
     }
   } else {
     showAuthOverlay();
-    setAuthModeUI('signin');
+    setAuthModeUI('signin'); // clears any existing error via setAuthError('')
+    if (pendingAuthError) { setAuthError(pendingAuthError); pendingAuthError = ''; }
     clearTimeout(autoSaveTimer);
     currentDocIsNew = true;
     currentDocId = null;
@@ -693,11 +715,11 @@ async function openDocBrowser() {
   document.getElementById('doc-browser-search').value = '';
   document.getElementById('doc-browser-tag-filter').value = '';
 
-  // Stale-while-revalidate: paint instantly from whatever's in the local
-  // IndexedDB cache (near-zero latency after the first load), then quietly
-  // refresh from the server and re-render if anything actually changed.
+  // Stale-while-revalidate: kick off the server fetch immediately so it runs
+  // in parallel with the cache paint, then swap in the fresh result once ready.
+  const serverFetch = fsGetAll(300);
   const paintedFromCache = await renderDocBrowserList('', { source: 'cache' });
-  await renderDocBrowserList('', { skipLoadingState: paintedFromCache });
+  await renderDocBrowserList('', { skipLoadingState: paintedFromCache, prefetched: serverFetch });
 
   document.getElementById('doc-browser-search').focus();
 }
@@ -708,6 +730,7 @@ function closeDocBrowser() {
 
 // Finder-style column sort: { field: 'name' | 'words' | 'modified', dir: 'asc' | 'desc' }
 let docBrowserSort = { field: 'modified', dir: 'desc' };
+let _docBrowserRenderGen = 0;
 
 function wordCount(d) {
   const content = (d.content || '').trim();
@@ -717,13 +740,20 @@ function wordCount(d) {
 function sortDocs(docs, sort) {
   const { field, dir } = sort;
   const sign = dir === 'asc' ? 1 : -1;
-  return [...docs].sort((a, b) => {
-    let cmp;
-    if (field === 'name')       cmp = (a.title || '').localeCompare(b.title || '');
-    else if (field === 'words') cmp = wordCount(a) - wordCount(b);
-    else                        cmp = tsToMs(a.updatedAt) - tsToMs(b.updatedAt); // modified
+  // Pre-compute keys once per doc so tsToMs/wordCount are never called inside
+  // the comparator (tsToMs returns Date.now() for null, giving an unstable key
+  // if called repeatedly; wordCount does a full string split on every call).
+  const keyed = docs.map(d => ({
+    d,
+    k: field === 'name'  ? (d.title || '') :
+       field === 'words' ? wordCount(d) :
+       tsToMs(d.updatedAt)
+  }));
+  keyed.sort((a, b) => {
+    const cmp = typeof a.k === 'string' ? a.k.localeCompare(b.k) : a.k - b.k;
     return cmp * sign;
   });
+  return keyed.map(({ d }) => d);
 }
 
 function updateDocBrowserSortHeader() {
@@ -738,6 +768,7 @@ function updateDocBrowserSortHeader() {
 const EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 
 async function renderDocBrowserList(query, opts) {
+  const gen = ++_docBrowserRenderGen;
   const list = document.getElementById('doc-browser-list');
   const fromCacheOnly = opts && opts.source === 'cache';
   if (!fromCacheOnly && !(opts && opts.skipLoadingState)) {
@@ -748,14 +779,23 @@ async function renderDocBrowserList(query, opts) {
     // Soft cap so the doc browser can't blow up on read cost/bandwidth as
     // the library grows; a real fix would split out a lightweight metadata
     // collection instead of always fetching full content.
-    docs = await fsGetAll(300, fromCacheOnly ? { source: 'cache' } : undefined);
+    docs = opts && opts.prefetched
+      ? await opts.prefetched
+      : await fsGetAll(300, fromCacheOnly ? { source: 'cache' } : undefined);
   } catch (err) {
-    if (fromCacheOnly) return false; // nothing cached yet (or persistence unsupported) — the server fetch that follows will paint the first render
-    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Error loading documents</div>';
+    if (fromCacheOnly) return false; // nothing cached yet — server fetch will do first paint
+    if (gen !== _docBrowserRenderGen) return false; // a newer render supersedes this one
+    // Preserve a cache-painted list rather than replacing it with an error
+    if (list.querySelector('.file-item')) {
+      showToast('Could not refresh — showing cached list');
+    } else {
+      list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Error loading documents</div>';
+    }
     console.error('renderDocBrowserList:', err);
     return false;
   }
   if (fromCacheOnly && docs.length === 0) return false; // empty cache — let the server response do the first paint
+  if (gen !== _docBrowserRenderGen) return false; // search/sort changed while fetching
 
   // Rebuild tag filter options, preserving current selection
   const allTags = [...new Set(docs.flatMap(d => d.tags || []))].sort();
@@ -851,12 +891,12 @@ async function renderDocBrowserList(query, opts) {
         done = true;
         const tags = input.value.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
         try { await fsUpdateTags(docId, tags); } catch (err) { showToast('Tag update failed'); console.error(err); }
-        renderDocBrowserList(document.getElementById('doc-browser-search').value);
+        renderDocBrowserList(document.getElementById('doc-browser-search').value, { skipLoadingState: true });
       };
 
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter')  { e.preventDefault(); save(); }
-        if (e.key === 'Escape') { cancelled = true; e.stopPropagation(); renderDocBrowserList(document.getElementById('doc-browser-search').value); }
+        if (e.key === 'Escape') { cancelled = true; e.stopPropagation(); renderDocBrowserList(document.getElementById('doc-browser-search').value, { skipLoadingState: true }); }
       });
       input.addEventListener('blur', () => { if (!cancelled) setTimeout(save, 100); });
     });
