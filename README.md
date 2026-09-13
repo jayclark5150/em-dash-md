@@ -111,6 +111,9 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.19.0
+- **Domain restriction** — access is now limited to `@michaelson-clark.com` accounts; unauthorized users are signed out immediately with a clear message, and Firestore rules enforce the same check at the database level (requires email verification)
+
 ### v3.18.0
 - **Delete My Account** — new danger-zone option in the ellipsis menu; requires typing "DELETE" and re-authenticating (password re-entry, or a Google re-auth popup) before permanently deleting all documents and the account itself
 

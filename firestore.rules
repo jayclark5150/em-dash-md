@@ -2,10 +2,15 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /documents/{docId} {
-      // Only the document's owner may read or write it
-      allow read, update, delete: if request.auth != null
+      function isAuthorizedUser() {
+        return request.auth != null
+          && request.auth.token.email_verified == true
+          && request.auth.token.email.matches('.*@michaelson-clark\\.com');
+      }
+
+      allow read, update, delete: if isAuthorizedUser()
                                   && request.auth.uid == resource.data.userId;
-      allow create: if request.auth != null
+      allow create: if isAuthorizedUser()
                     && request.auth.uid == request.resource.data.userId;
     }
   }

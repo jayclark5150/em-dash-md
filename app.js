@@ -310,6 +310,12 @@ let appBooted = false;
 
 auth.onAuthStateChanged(async (user) => {
   if (user) {
+    if (!user.email || !user.email.endsWith('@michaelson-clark.com')) {
+      await auth.signOut();
+      setAuthError('Access is restricted to @michaelson-clark.com accounts.');
+      setAuthLoading(false);
+      return;
+    }
     hideAuthOverlay();
     setAuthLoading(false);
     if (!appBooted) {
