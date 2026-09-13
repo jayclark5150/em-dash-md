@@ -3,6 +3,20 @@ firebase.initializeApp(FIREBASE_CONFIG);
 const db   = firebase.firestore();
 const auth = firebase.auth();
 
+// Cache reads in IndexedDB so repeat loads (e.g. reopening the doc browser,
+// or relaunching the app) can paint from disk instead of waiting on a round
+// trip every time. synchronizeTabs lets persistence stay enabled even with
+// more than one tab of the app open at once.
+db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
+  if (err.code === 'failed-precondition') {
+    console.warn('Firestore persistence unavailable: another tab has an incompatible session open.');
+  } else if (err.code === 'unimplemented') {
+    console.warn('Firestore persistence unavailable: this browser does not support it.');
+  } else {
+    console.warn('Firestore persistence failed to enable:', err);
+  }
+});
+
 // ── Firestore helpers ─────────────────────────────────────────────────────────
 function tsToMs(ts) {
   if (!ts) return Date.now();
@@ -10,12 +24,12 @@ function tsToMs(ts) {
   return typeof ts === 'number' ? ts : Date.now();
 }
 
-async function fsGetAll(max) {
+async function fsGetAll(max, opts) {
   let q = db.collection('documents')
     .where('userId', '==', auth.currentUser.uid)
     .orderBy('updatedAt', 'desc');
   if (max) q = q.limit(max);
-  const snap = await q.get();
+  const snap = await q.get(opts && opts.source ? { source: opts.source } : undefined);
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
@@ -162,6 +176,111 @@ document.getElementById('auth-google-btn').addEventListener('click', async () =>
 document.getElementById('signout-btn').addEventListener('click', async () => {
   if (isDirty) await performSave(true);
   await auth.signOut();
+});
+
+// ── Delete account ────────────────────────────────────────────────────────────
+async function openDeleteAccountModal() {
+  document.getElementById('hdr-more-menu').classList.remove('open');
+  const modal       = document.getElementById('delete-account-modal');
+  const confirmInput = document.getElementById('delete-account-confirm-input');
+  const pwWrap       = document.getElementById('delete-account-password-wrap');
+  const confirmBtn   = document.getElementById('delete-account-confirm-btn');
+  const errorEl      = document.getElementById('delete-account-error');
+  const countEl      = document.getElementById('delete-account-doc-count');
+
+  confirmInput.value = '';
+  document.getElementById('delete-account-password-input').value = '';
+  errorEl.style.display = 'none';
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Delete My Account';
+
+  const isPasswordUser = (auth.currentUser.providerData || []).some(p => p.providerId === 'password');
+  pwWrap.style.display = isPasswordUser ? '' : 'none';
+
+  countEl.textContent = '…';
+  modal.classList.add('open');
+  confirmInput.focus();
+
+  try {
+    const snap = await db.collection('documents').where('userId', '==', auth.currentUser.uid).get();
+    countEl.textContent = String(snap.size);
+  } catch (err) {
+    countEl.textContent = 'your';
+  }
+}
+
+function closeDeleteAccountModal() {
+  document.getElementById('delete-account-modal').classList.remove('open');
+}
+
+document.getElementById('hdr-delete-account-btn').addEventListener('click', openDeleteAccountModal);
+document.getElementById('delete-account-cancel').addEventListener('click', closeDeleteAccountModal);
+
+document.getElementById('delete-account-confirm-input').addEventListener('input', (e) => {
+  document.getElementById('delete-account-confirm-btn').disabled = e.target.value !== 'DELETE';
+});
+
+document.getElementById('delete-account-confirm-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeDeleteAccountModal();
+});
+
+async function deleteAllUserDocs(uid) {
+  // Firestore batches cap at 500 writes; loop in case the library ever exceeds that.
+  while (true) {
+    const snap = await db.collection('documents').where('userId', '==', uid).limit(450).get();
+    if (snap.empty) return;
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+    if (snap.size < 450) return;
+  }
+}
+
+document.getElementById('delete-account-confirm-btn').addEventListener('click', async () => {
+  const confirmInput = document.getElementById('delete-account-confirm-input');
+  const errorEl       = document.getElementById('delete-account-error');
+  const confirmBtn    = document.getElementById('delete-account-confirm-btn');
+  const pwInput       = document.getElementById('delete-account-password-input');
+
+  errorEl.style.display = 'none';
+  if (confirmInput.value !== 'DELETE') return;
+
+  const user = auth.currentUser;
+  if (!user) return;
+
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Deleting…';
+
+  try {
+    // Firebase requires a recent sign-in before it will allow account deletion.
+    const isPasswordUser = (user.providerData || []).some(p => p.providerId === 'password');
+    if (isPasswordUser) {
+      if (!pwInput.value) throw { code: 'auth/missing-password' };
+      const cred = firebase.auth.EmailAuthProvider.credential(user.email, pwInput.value);
+      await user.reauthenticateWithCredential(cred);
+    } else {
+      await user.reauthenticateWithPopup(new firebase.auth.GoogleAuthProvider());
+    }
+
+    await deleteAllUserDocs(user.uid);
+    await user.delete();
+
+    closeDeleteAccountModal();
+    showToast('Account deleted');
+    // user.delete() fires onAuthStateChanged(null), which returns the app to the sign-in screen.
+  } catch (err) {
+    const msg = {
+      'auth/wrong-password':         'Incorrect password.',
+      'auth/missing-password':       'Enter your password to confirm.',
+      'auth/requires-recent-login':  'Please sign out, sign back in, and try again.',
+      'auth/popup-closed-by-user':   'Re-authentication was cancelled.',
+      'auth/network-request-failed': 'Network error — check your connection.',
+    }[err.code] || 'Could not delete account. Please try again.';
+    errorEl.textContent = msg;
+    errorEl.style.display = '';
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'Delete My Account';
+  }
 });
 
 // Also wire Enter key on auth inputs
@@ -567,7 +686,13 @@ async function openDocBrowser() {
   modal.classList.add('open');
   document.getElementById('doc-browser-search').value = '';
   document.getElementById('doc-browser-tag-filter').value = '';
-  await renderDocBrowserList('');
+
+  // Stale-while-revalidate: paint instantly from whatever's in the local
+  // IndexedDB cache (near-zero latency after the first load), then quietly
+  // refresh from the server and re-render if anything actually changed.
+  const paintedFromCache = await renderDocBrowserList('', { source: 'cache' });
+  await renderDocBrowserList('', { skipLoadingState: paintedFromCache });
+
   document.getElementById('doc-browser-search').focus();
 }
 
@@ -575,31 +700,56 @@ function closeDocBrowser() {
   document.getElementById('doc-browser-modal').classList.remove('open');
 }
 
+// Finder-style column sort: { field: 'name' | 'words' | 'modified', dir: 'asc' | 'desc' }
+let docBrowserSort = { field: 'modified', dir: 'desc' };
+
+function wordCount(d) {
+  const content = (d.content || '').trim();
+  return content ? content.split(/\s+/).length : 0;
+}
+
 function sortDocs(docs, sort) {
-  switch (sort) {
-    case 'oldest':  return [...docs].sort((a, b) => tsToMs(a.updatedAt) - tsToMs(b.updatedAt));
-    case 'name-az': return [...docs].sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-    case 'name-za': return [...docs].sort((a, b) => (b.title || '').localeCompare(a.title || ''));
-    default:        return docs; // newest — already sorted by Firestore
-  }
+  const { field, dir } = sort;
+  const sign = dir === 'asc' ? 1 : -1;
+  return [...docs].sort((a, b) => {
+    let cmp;
+    if (field === 'name')       cmp = (a.title || '').localeCompare(b.title || '');
+    else if (field === 'words') cmp = wordCount(a) - wordCount(b);
+    else                        cmp = tsToMs(a.updatedAt) - tsToMs(b.updatedAt); // modified
+    return cmp * sign;
+  });
+}
+
+function updateDocBrowserSortHeader() {
+  document.querySelectorAll('#doc-browser-modal .file-col-sortable').forEach(el => {
+    const isActive = el.dataset.field === docBrowserSort.field;
+    el.classList.toggle('active', isActive);
+    const arrow = el.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = isActive ? (docBrowserSort.dir === 'asc' ? '▲' : '▼') : '';
+  });
 }
 
 const EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 
-async function renderDocBrowserList(query) {
+async function renderDocBrowserList(query, opts) {
   const list = document.getElementById('doc-browser-list');
-  list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading…</div>';
+  const fromCacheOnly = opts && opts.source === 'cache';
+  if (!fromCacheOnly && !(opts && opts.skipLoadingState)) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading…</div>';
+  }
   let docs;
   try {
     // Soft cap so the doc browser can't blow up on read cost/bandwidth as
     // the library grows; a real fix would split out a lightweight metadata
     // collection instead of always fetching full content.
-    docs = await fsGetAll(300);
+    docs = await fsGetAll(300, fromCacheOnly ? { source: 'cache' } : undefined);
   } catch (err) {
+    if (fromCacheOnly) return false; // nothing cached yet (or persistence unsupported) — the server fetch that follows will paint the first render
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Error loading documents</div>';
     console.error('renderDocBrowserList:', err);
-    return;
+    return false;
   }
+  if (fromCacheOnly && docs.length === 0) return false; // empty cache — let the server response do the first paint
 
   // Rebuild tag filter options, preserving current selection
   const allTags = [...new Set(docs.flatMap(d => d.tags || []))].sort();
@@ -625,7 +775,8 @@ async function renderDocBrowserList(query) {
     docs = docs.filter(d => (d.tags || []).includes(selectedTag));
   }
 
-  docs = sortDocs(docs, document.getElementById('doc-browser-sort').value);
+  docs = sortDocs(docs, docBrowserSort);
+  updateDocBrowserSortHeader();
 
   const countEl = document.getElementById('doc-browser-count');
   if ((query || selectedTag) && docs.length !== total) {
@@ -637,7 +788,7 @@ async function renderDocBrowserList(query) {
   if (!docs.length) {
     list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">' +
       (query || selectedTag ? 'No matching documents' : 'No saved documents yet') + '</div>';
-    return;
+    return true;
   }
 
   const fmtDate = ts => new Date(tsToMs(ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -645,35 +796,23 @@ async function renderDocBrowserList(query) {
   list.innerHTML = docs.map(d => {
     const modDate     = fmtDate(d.updatedAt);
     const createdDate = d.createdAt ? fmtDate(d.createdAt) : null;
-    const words       = (d.content || '').trim() ? (d.content || '').trim().split(/\s+/).length : 0;
+    const words       = wordCount(d);
     const extMatch    = (d.title || '').match(/\.([a-z0-9]+)$/i);
     const docType     = extMatch ? extMatch[1].toUpperCase().slice(0, 4) : 'MD';
     const tags        = d.tags || [];
     const tagHtml     = tags.map(t => `<span class="file-tag">${esc(t)}</span>`).join('');
-    const previewText = (d.content || '')
-      .replace(/^#+\s+.*/gm, '')
-      .replace(/[`*_~]/g, '')
-      .trim();
-    const preview = esc(previewText.slice(0, 160).replace(/\n+/g, ' ').trim());
+    const modifiedTitle = createdDate && createdDate !== modDate ? ` title="Created ${esc(createdDate)}"` : '';
 
     return `<div class="file-item" data-id="${esc(d.id)}" data-tags="${esc(JSON.stringify(tags))}">
-      <div class="file-type-badge">${esc(docType)}</div>
-      <div class="file-body">
-        <div class="file-title-row">
-          <span class="file-name">${esc(d.title || 'Untitled')}</span>
-          <span class="file-modified">${esc(modDate)}</span>
+      <div class="file-col-name">
+        <div class="file-type-badge">${esc(docType)}</div>
+        <span class="file-name" title="${esc(d.title || 'Untitled')}">${esc(d.title || 'Untitled')}</span>
+        <div class="file-tags-wrap">
+          ${tagHtml}<button class="file-tag-btn" data-id="${esc(d.id)}" title="Edit tags">${tags.length ? EDIT_SVG : '+ tag'}</button>
         </div>
-        <div class="file-meta-row">
-          <div class="file-tags-wrap">
-            ${tagHtml}<button class="file-tag-btn" data-id="${esc(d.id)}" title="Edit tags">${tags.length ? EDIT_SVG : '+ tag'}</button>
-          </div>
-          <div class="file-right-meta">
-            <span class="file-wordcount">${words.toLocaleString()} words</span>
-            ${createdDate && createdDate !== modDate ? `<span class="file-created" title="Date created">Created ${esc(createdDate)}</span>` : ''}
-          </div>
-        </div>
-        ${preview ? `<div class="file-preview">${preview}</div>` : ''}
       </div>
+      <div class="file-col-words">${words.toLocaleString()}</div>
+      <div class="file-col-modified"${modifiedTitle}>${esc(modDate)}</div>
     </div>`;
   }).join('');
 
@@ -716,6 +855,8 @@ async function renderDocBrowserList(query) {
       input.addEventListener('blur', () => { if (!cancelled) setTimeout(save, 100); });
     });
   });
+
+  return true;
 }
 
 async function loadDoc(id) {
@@ -827,8 +968,17 @@ document.getElementById('doc-browser-cancel').addEventListener('click', closeDoc
 document.getElementById('doc-browser-search').addEventListener('input', (e) => {
   renderDocBrowserList(e.target.value);
 });
-document.getElementById('doc-browser-sort').addEventListener('change', () => {
-  renderDocBrowserList(document.getElementById('doc-browser-search').value);
+document.querySelectorAll('#doc-browser-modal .file-col-sortable').forEach(el => {
+  el.addEventListener('click', () => {
+    const field = el.dataset.field;
+    if (docBrowserSort.field === field) {
+      docBrowserSort.dir = docBrowserSort.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      docBrowserSort.field = field;
+      docBrowserSort.dir = field === 'name' ? 'asc' : 'desc';
+    }
+    renderDocBrowserList(document.getElementById('doc-browser-search').value);
+  });
 });
 document.getElementById('doc-browser-tag-filter').addEventListener('change', () => {
   renderDocBrowserList(document.getElementById('doc-browser-search').value);

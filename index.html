@@ -175,6 +175,11 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
           Focus Mode (F11)
         </button>
+        <div class="hdr-dd-sep"></div>
+        <button class="hdr-dd-item hdr-dd-danger" id="hdr-delete-account-btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+          Delete My Account…
+        </button>
       </div>
     </div>
   </div>
@@ -299,7 +304,7 @@
 
 <!-- Status bar -->
 <div id="statusbar">
-  <span id="app-version">v3.16.0</span>
+  <span id="app-version">v3.18.0</span>
   <span id="word-count" title="Click to set a word goal">Words: 0</span>
   <span id="char-count">Chars: 0</span>
   <span id="cursor-pos">Ln 1, Col 1</span>
@@ -324,24 +329,46 @@
 
 <!-- Document browser modal -->
 <div id="doc-browser-modal" class="modal-backdrop">
-  <div class="modal" style="width:640px">
+  <div class="modal" style="width:760px">
     <div class="modal-title">Open Document</div>
     <div class="doc-browser-controls">
       <input type="text" class="modal-search" id="doc-browser-search" placeholder="Search documents…" autocomplete="off"/>
       <select id="doc-browser-tag-filter" class="doc-browser-sort">
         <option value="">All tags</option>
       </select>
-      <select id="doc-browser-sort" class="doc-browser-sort">
-        <option value="newest">Newest</option>
-        <option value="oldest">Oldest</option>
-        <option value="name-az">A-Z</option>
-        <option value="name-za">Z-A</option>
-      </select>
+    </div>
+    <div class="file-list-header">
+      <span class="file-col-name file-col-sortable" data-field="name">Name<span class="sort-arrow"></span></span>
+      <span class="file-col-words file-col-sortable" data-field="words">Words<span class="sort-arrow"></span></span>
+      <span class="file-col-modified file-col-sortable" data-field="modified">Date Modified<span class="sort-arrow"></span></span>
     </div>
     <div class="file-list" id="doc-browser-list"></div>
     <div class="modal-footer">
       <span id="doc-browser-count" class="doc-browser-count"></span>
       <button class="btn btn-secondary" id="doc-browser-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete account modal -->
+<div id="delete-account-modal" class="modal-backdrop">
+  <div class="modal" style="width:420px">
+    <div class="modal-title">Delete Account</div>
+    <div class="auth-error" id="delete-account-warning" style="margin-bottom:12px;background:rgba(224,108,117,.1);color:#e06c75;border-color:rgba(224,108,117,.25)">
+      This permanently deletes your account and all <span id="delete-account-doc-count">…</span> documents. This cannot be undone.
+    </div>
+    <div style="margin-bottom:12px">
+      <label class="modal-label">Type DELETE to confirm</label>
+      <input type="text" class="modal-input" id="delete-account-confirm-input" placeholder="DELETE" autocomplete="off" spellcheck="false"/>
+    </div>
+    <div id="delete-account-password-wrap" style="margin-bottom:12px">
+      <label class="modal-label">Re-enter your password</label>
+      <input type="password" class="modal-input" id="delete-account-password-input" autocomplete="current-password"/>
+    </div>
+    <div class="auth-error" id="delete-account-error" style="display:none;margin-bottom:12px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="delete-account-cancel">Cancel</button>
+      <button class="btn btn-danger" id="delete-account-confirm-btn" disabled>Delete My Account</button>
     </div>
   </div>
 </div>

@@ -21,6 +21,7 @@ A cloud-first Markdown editor that lives in your browser. Sign in once and your 
 - **Installable** — Works as a PWA on desktop, iPhone, and iPad
 - **Preview zoom** — Scale the preview pane independently of the editor
 - **Document tags** — Tag documents and filter your library by tag; tags are stored in Firestore alongside the document
+- **Delete My Account** — permanently delete your account and all documents from within the app, after typed confirmation and re-authentication
 
 ---
 
@@ -109,6 +110,15 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 ---
 
 ## Changelog
+
+### v3.18.0
+- **Delete My Account** — new danger-zone option in the ellipsis menu; requires typing "DELETE" and re-authenticating (password re-entry, or a Google re-auth popup) before permanently deleting all documents and the account itself
+
+### v3.17.0
+- **Local caching** — Firestore reads are now cached in IndexedDB (`enablePersistence`); the Open Document browser paints instantly from the local cache and refreshes from the server in the background (stale-while-revalidate) instead of waiting on a round trip every time it opens
+- **Document browser redesigned** — replaced the card layout with a compact, Finder-style list: click the Name / Words / Date Modified column headers to sort (ascending/descending), tags now sit inline next to the title and their edit control appears on hover
+- Browser modal widened to 760px for the new column layout; the old Newest/Oldest/A-Z/Z-A sort dropdown and the 2-line content preview were removed in favor of the sortable columns
+- Service worker cache bumped to `em-dash-md-v3` so installed/PWA users pick up this update instead of serving a stale cached copy
 
 ### v3.16.0
 - **Enriched document browser** — each entry now shows a file-type badge (MD, TXT, etc.), word count, date created, date modified, and a 2-line content preview with markdown syntax stripped

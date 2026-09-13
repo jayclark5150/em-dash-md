@@ -7,3 +7,7 @@ markdown-pwa/
 .DS_Store
 firebase-config.js
 .firebase/
+
+# Local tooling / generated artifacts
+.claude/
+Claude outputs/
