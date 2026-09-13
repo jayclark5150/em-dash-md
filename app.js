@@ -39,6 +39,10 @@ async function fsDelete(id) {
   await db.collection('documents').doc(id).delete();
 }
 
+async function fsUpdateTags(id, tags) {
+  await db.collection('documents').doc(id).update({ tags });
+}
+
 // ── Auth ──────────────────────────────────────────────────────────────────────
 let authMode = 'signin';
 
@@ -562,6 +566,7 @@ async function openDocBrowser() {
   const modal = document.getElementById('doc-browser-modal');
   modal.classList.add('open');
   document.getElementById('doc-browser-search').value = '';
+  document.getElementById('doc-browser-tag-filter').value = '';
   await renderDocBrowserList('');
   document.getElementById('doc-browser-search').focus();
 }
@@ -579,6 +584,8 @@ function sortDocs(docs, sort) {
   }
 }
 
+const EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+
 async function renderDocBrowserList(query) {
   const list = document.getElementById('doc-browser-list');
   list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading…</div>';
@@ -593,35 +600,121 @@ async function renderDocBrowserList(query) {
     console.error('renderDocBrowserList:', err);
     return;
   }
+
+  // Rebuild tag filter options, preserving current selection
+  const allTags = [...new Set(docs.flatMap(d => d.tags || []))].sort();
+  const tagFilter = document.getElementById('doc-browser-tag-filter');
+  const prevTag = tagFilter.value;
+  tagFilter.innerHTML = '<option value="">All tags</option>' +
+    allTags.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+  if (allTags.includes(prevTag)) tagFilter.value = prevTag;
+
   const total = docs.length;
+
   if (query) {
     const q = query.toLowerCase();
-    docs = docs.filter(d => (d.title || '').toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q));
+    docs = docs.filter(d =>
+      (d.title || '').toLowerCase().includes(q) ||
+      (d.content || '').toLowerCase().includes(q) ||
+      (d.tags || []).some(t => t.toLowerCase().includes(q))
+    );
   }
+
+  const selectedTag = tagFilter.value;
+  if (selectedTag) {
+    docs = docs.filter(d => (d.tags || []).includes(selectedTag));
+  }
+
   docs = sortDocs(docs, document.getElementById('doc-browser-sort').value);
+
   const countEl = document.getElementById('doc-browser-count');
-  if (query && docs.length !== total) {
+  if ((query || selectedTag) && docs.length !== total) {
     countEl.textContent = `${docs.length} of ${total} document${total !== 1 ? 's' : ''}`;
   } else {
     countEl.textContent = `${total} document${total !== 1 ? 's' : ''}`;
   }
+
   if (!docs.length) {
-    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">' + (query ? 'No matching documents' : 'No saved documents yet') + '</div>';
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">' +
+      (query || selectedTag ? 'No matching documents' : 'No saved documents yet') + '</div>';
     return;
   }
+
+  const fmtDate = ts => new Date(tsToMs(ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
   list.innerHTML = docs.map(d => {
-    const date    = new Date(tsToMs(d.updatedAt)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    const preview = esc((d.content || '').slice(0, 80).replace(/\n/g, ' '));
-    return `<div class="file-item" data-id="${esc(d.id)}">
-      <div style="flex:1;min-width:0">
-        <div class="file-name">${esc(d.title || 'Untitled')}</div>
-        <div class="file-date">${preview}</div>
+    const modDate     = fmtDate(d.updatedAt);
+    const createdDate = d.createdAt ? fmtDate(d.createdAt) : null;
+    const words       = (d.content || '').trim() ? (d.content || '').trim().split(/\s+/).length : 0;
+    const extMatch    = (d.title || '').match(/\.([a-z0-9]+)$/i);
+    const docType     = extMatch ? extMatch[1].toUpperCase().slice(0, 4) : 'MD';
+    const tags        = d.tags || [];
+    const tagHtml     = tags.map(t => `<span class="file-tag">${esc(t)}</span>`).join('');
+    const previewText = (d.content || '')
+      .replace(/^#+\s+.*/gm, '')
+      .replace(/[`*_~]/g, '')
+      .trim();
+    const preview = esc(previewText.slice(0, 160).replace(/\n+/g, ' ').trim());
+
+    return `<div class="file-item" data-id="${esc(d.id)}" data-tags="${esc(JSON.stringify(tags))}">
+      <div class="file-type-badge">${esc(docType)}</div>
+      <div class="file-body">
+        <div class="file-title-row">
+          <span class="file-name">${esc(d.title || 'Untitled')}</span>
+          <span class="file-modified">${esc(modDate)}</span>
+        </div>
+        <div class="file-meta-row">
+          <div class="file-tags-wrap">
+            ${tagHtml}<button class="file-tag-btn" data-id="${esc(d.id)}" title="Edit tags">${tags.length ? EDIT_SVG : '+ tag'}</button>
+          </div>
+          <div class="file-right-meta">
+            <span class="file-wordcount">${words.toLocaleString()} words</span>
+            ${createdDate && createdDate !== modDate ? `<span class="file-created" title="Date created">Created ${esc(createdDate)}</span>` : ''}
+          </div>
+        </div>
+        ${preview ? `<div class="file-preview">${preview}</div>` : ''}
       </div>
-      <div class="file-date" style="margin-left:12px;white-space:nowrap">${esc(date)}</div>
     </div>`;
   }).join('');
+
   list.querySelectorAll('.file-item').forEach(el => {
-    el.addEventListener('click', () => loadDoc(el.dataset.id));
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.file-tag-btn, .file-tag-input')) return;
+      loadDoc(el.dataset.id);
+    });
+  });
+
+  list.querySelectorAll('.file-tag-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = btn.closest('.file-item');
+      const wrap = item.querySelector('.file-tags-wrap');
+      const docId = btn.dataset.id;
+      let currentTags;
+      try { currentTags = JSON.parse(item.dataset.tags || '[]'); } catch (_) { currentTags = []; }
+
+      wrap.innerHTML = `<input class="file-tag-input" value="${esc(currentTags.join(', '))}" placeholder="tag1, tag2…">`;
+      const input = wrap.querySelector('.file-tag-input');
+      input.focus();
+      if (currentTags.length) input.select();
+
+      let done = false;
+      let cancelled = false;
+
+      const save = async () => {
+        if (done) return;
+        done = true;
+        const tags = input.value.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+        try { await fsUpdateTags(docId, tags); } catch (err) { showToast('Tag update failed'); console.error(err); }
+        renderDocBrowserList(document.getElementById('doc-browser-search').value);
+      };
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter')  { e.preventDefault(); save(); }
+        if (e.key === 'Escape') { cancelled = true; e.stopPropagation(); renderDocBrowserList(document.getElementById('doc-browser-search').value); }
+      });
+      input.addEventListener('blur', () => { if (!cancelled) setTimeout(save, 100); });
+    });
   });
 }
 
@@ -735,6 +828,9 @@ document.getElementById('doc-browser-search').addEventListener('input', (e) => {
   renderDocBrowserList(e.target.value);
 });
 document.getElementById('doc-browser-sort').addEventListener('change', () => {
+  renderDocBrowserList(document.getElementById('doc-browser-search').value);
+});
+document.getElementById('doc-browser-tag-filter').addEventListener('change', () => {
   renderDocBrowserList(document.getElementById('doc-browser-search').value);
 });
 document.getElementById('doc-browser-modal').addEventListener('click', (e) => {

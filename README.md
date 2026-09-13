@@ -20,6 +20,7 @@ A cloud-first Markdown editor that lives in your browser. Sign in once and your 
 - **Themes** — Lokai (dark editor / white chrome), Dark, Light
 - **Installable** — Works as a PWA on desktop, iPhone, and iPad
 - **Preview zoom** — Scale the preview pane independently of the editor
+- **Document tags** — Tag documents and filter your library by tag; tags are stored in Firestore alongside the document
 
 ---
 
@@ -108,6 +109,12 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 ---
 
 ## Changelog
+
+### v3.16.0
+- **Enriched document browser** — each entry now shows a file-type badge (MD, TXT, etc.), word count, date created, date modified, and a 2-line content preview with markdown syntax stripped
+- **Tags** — add comma-separated tags to any document directly in the browser; tags are stored in Firestore and persist across sessions
+- **Tag filter** — filter the document list by tag using the new dropdown next to the search box; search also matches tag text
+- Browser modal widened to 640 px to accommodate the richer layout
 
 ### v3.15.5
 - Word goal: click the word count in the status bar to set a target; turns accent color when met; persists across sessions

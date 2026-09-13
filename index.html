@@ -299,7 +299,7 @@
 
 <!-- Status bar -->
 <div id="statusbar">
-  <span id="app-version">v3.15.5</span>
+  <span id="app-version">v3.16.0</span>
   <span id="word-count" title="Click to set a word goal">Words: 0</span>
   <span id="char-count">Chars: 0</span>
   <span id="cursor-pos">Ln 1, Col 1</span>
@@ -324,10 +324,13 @@
 
 <!-- Document browser modal -->
 <div id="doc-browser-modal" class="modal-backdrop">
-  <div class="modal" style="width:520px">
+  <div class="modal" style="width:640px">
     <div class="modal-title">Open Document</div>
     <div class="doc-browser-controls">
       <input type="text" class="modal-search" id="doc-browser-search" placeholder="Search documents…" autocomplete="off"/>
+      <select id="doc-browser-tag-filter" class="doc-browser-sort">
+        <option value="">All tags</option>
+      </select>
       <select id="doc-browser-sort" class="doc-browser-sort">
         <option value="newest">Newest</option>
         <option value="oldest">Oldest</option>
