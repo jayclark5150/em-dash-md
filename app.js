@@ -366,6 +366,7 @@ let currentDocIsNew = true; // true until the doc has been written to Firestore 
 let currentTitle   = 'New Document';
 let isDirty        = false;
 let autoSaveTimer  = null;
+let previewEditing = false;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const editor         = document.getElementById('editor');
@@ -410,6 +411,7 @@ if (window.DOMPurify) {
 
 // ── Render preview ────────────────────────────────────────────────────────────
 function renderPreview() {
+  if (previewEditing) return;
   if (window.marked && window.DOMPurify) {
     try {
       previewInner.innerHTML = DOMPurify.sanitize(marked.parse(editor.value || ''));
@@ -429,6 +431,7 @@ function addCodeCopyButtons() {
     if (!pre.querySelector('code')) return;
     const wrap = document.createElement('div');
     wrap.className = 'code-block';
+    wrap.contentEditable = 'false';
     pre.parentNode.insertBefore(wrap, pre);
     wrap.appendChild(pre);
 
@@ -1033,6 +1036,44 @@ document.getElementById('doc-browser-modal').addEventListener('click', (e) => {
   if (e.target === document.getElementById('doc-browser-modal')) closeDocBrowser();
 });
 
+// Resize grip
+(function () {
+  const modal = document.querySelector('#doc-browser-modal .modal');
+  const grip  = document.getElementById('doc-browser-resize-grip');
+
+  const saved = JSON.parse(localStorage.getItem('doc-browser-size') || 'null');
+  if (saved) {
+    modal.style.width    = saved.w + 'px';
+    modal.style.height   = saved.h + 'px';
+    modal.style.maxWidth  = 'none';
+    modal.style.maxHeight = 'none';
+  }
+
+  grip.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = modal.offsetWidth, startH = modal.offsetHeight;
+
+    function onMove(e) {
+      const w = Math.max(480, Math.min(window.innerWidth  - 40, startW + e.clientX - startX));
+      const h = Math.max(320, Math.min(window.innerHeight - 40, startH + e.clientY - startY));
+      modal.style.width     = w + 'px';
+      modal.style.height    = h + 'px';
+      modal.style.maxWidth  = 'none';
+      modal.style.maxHeight = 'none';
+    }
+
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      localStorage.setItem('doc-browser-size', JSON.stringify({ w: modal.offsetWidth, h: modal.offsetHeight }));
+    }
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}());
+
 // ── List continuation ─────────────────────────────────────────────────────────
 editor.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
@@ -1266,6 +1307,51 @@ document.addEventListener('fullscreenchange', () => {
 
 document.getElementById('focus-btn').addEventListener('click', toggleFocusMode);
 document.getElementById('focus-exit-btn').addEventListener('click', exitFocusMode);
+
+// ── Preview WYSIWYG editing ───────────────────────────────────────────────────
+previewInner.contentEditable = 'true';
+previewInner.spellcheck = true;
+
+let previewWysiwygTimer;
+
+previewInner.addEventListener('focus', () => { previewEditing = true; });
+
+previewInner.addEventListener('blur', () => {
+  previewEditing = false;
+  clearTimeout(previewWysiwygTimer);
+  const turndown = getTurndown();
+  if (turndown) {
+    const md = turndown.turndown(previewInner.innerHTML);
+    if (md !== editor.value) {
+      editor.value = md;
+      isDirty = true;
+      scheduleAutoSave();
+      updateStats();
+      updateLineNumbers();
+    }
+  }
+  renderPreview();
+});
+
+previewInner.addEventListener('input', () => {
+  clearTimeout(previewWysiwygTimer);
+  previewWysiwygTimer = setTimeout(() => {
+    if (!previewEditing) return;
+    const turndown = getTurndown();
+    if (turndown) {
+      editor.value = turndown.turndown(previewInner.innerHTML);
+      isDirty = true;
+      scheduleAutoSave();
+      updateStats();
+    }
+  }, 600);
+});
+
+previewInner.addEventListener('paste', (e) => {
+  e.preventDefault();
+  const text = e.clipboardData.getData('text/plain');
+  document.execCommand('insertText', false, text);
+});
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────────
 document.addEventListener('keydown', (e) => {

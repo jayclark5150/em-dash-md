@@ -452,6 +452,7 @@ body {
 #preview-inner {
   transform-origin: top left;
 }
+#preview-inner:focus { outline: none; }
 
 #preview-pane h1,h2,h3,h4,h5,h6 { color: var(--text); margin: 1.5em 0 .5em; line-height: 1.3; }
 #preview-pane h1 { font-size: 1.8em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
@@ -575,7 +576,9 @@ body {
 /* ── Modals ── */
 .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
 .modal-backdrop.open { display: flex; }
-.modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 560px; max-width: 95vw; max-height: 80vh; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 24px 64px rgba(0,0,0,.15); }
+.modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 560px; max-width: 95vw; max-height: 80vh; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 24px 64px rgba(0,0,0,.15); position: relative; }
+.modal-resize-grip { position: absolute; bottom: 4px; right: 4px; width: 14px; height: 14px; cursor: nwse-resize; opacity: 0.25; background-image: repeating-linear-gradient(-45deg, var(--text2) 0, var(--text2) 1px, transparent 0, transparent 4px); border-radius: 0 0 8px 0; }
+.modal-resize-grip:hover { opacity: 0.55; }
 .modal-title { font-size: 17px; font-weight: 600; color: var(--text); }
 .modal-search { padding: 8px 12px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 15px; width: 100%; }
 .modal-search:focus { outline: none; border-color: var(--accent); }

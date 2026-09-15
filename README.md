@@ -111,6 +111,9 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.19.2
+- **Resizable document browser** — drag the grip in the bottom-right corner of the Open Document window to resize it; the chosen size is remembered across sessions
+
 ### v3.19.0
 - **Domain restriction** — access is now limited to `@michaelson-clark.com` accounts; unauthorized users are signed out immediately with a clear message, and Firestore rules enforce the same check at the database level (requires email verification)
 
