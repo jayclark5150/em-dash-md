@@ -589,12 +589,13 @@ body {
 
 /* Finder-style column list */
 .file-list-header { display: flex; align-items: center; gap: 10px; padding: 6px 14px 6px 44px; border: 1px solid var(--border); border-bottom: none; border-radius: 6px 6px 0 0; background: var(--bg3); }
-.file-col-name, .file-col-words, .file-col-modified { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text2); }
+.file-col-name, .file-col-tags, .file-col-words, .file-col-modified { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--text2); }
 .file-col-sortable { cursor: pointer; user-select: none; }
 .file-col-sortable:hover { color: var(--text); }
 .file-col-sortable.active { color: var(--accent); }
 .sort-arrow { font-size: 9px; margin-left: 2px; }
 .file-list-header .file-col-name { flex: 1; min-width: 0; }
+.file-list-header .file-col-tags { width: 160px; flex-shrink: 0; }
 .file-list-header .file-col-words { width: 64px; text-align: right; flex-shrink: 0; }
 .file-list-header .file-col-modified { width: 110px; text-align: right; flex-shrink: 0; }
 
@@ -606,7 +607,8 @@ body {
 .file-type-badge { flex-shrink: 0; width: 20px; height: 20px; background: var(--accent); color: #fff; border-radius: 5px; font-size: 7px; font-weight: 700; letter-spacing: .05em; display: flex; align-items: center; justify-content: center; }
 .file-col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .file-name { flex-shrink: 1; min-width: 40px; color: var(--text); font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-tags-wrap { display: flex; align-items: center; gap: 4px; flex-shrink: 0; overflow: hidden; }
+.file-col-tags { width: 160px; flex-shrink: 0; overflow: hidden; }
+.file-tags-wrap { display: flex; align-items: center; gap: 4px; overflow: hidden; }
 .file-tag { background: rgba(95,111,46,.12); color: var(--accent); border: 1px solid rgba(95,111,46,.2); border-radius: 10px; padding: 1px 6px; font-size: 9px; font-weight: 500; white-space: nowrap; }
 .file-tag-btn { background: none; border: 1px dashed var(--border); border-radius: 10px; color: var(--text2); font-size: 10px; padding: 1px 6px; cursor: pointer; white-space: nowrap; transition: opacity .12s, border-color .12s, color .12s; display: inline-flex; align-items: center; gap: 3px; font-family: var(--font); opacity: 0; }
 .file-item:hover .file-tag-btn, .file-tags-wrap:focus-within .file-tag-btn { opacity: 1; }

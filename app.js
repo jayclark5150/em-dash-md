@@ -856,6 +856,8 @@ async function renderDocBrowserList(query, opts) {
       <div class="file-col-name">
         <div class="file-type-badge">${esc(docType)}</div>
         <span class="file-name" title="${esc(d.title || 'Untitled')}">${esc(d.title || 'Untitled')}</span>
+      </div>
+      <div class="file-col-tags">
         <div class="file-tags-wrap">
           ${tagHtml}<button class="file-tag-btn" data-id="${esc(d.id)}" title="Edit tags">${tags.length ? EDIT_SVG : '+ tag'}</button>
         </div>
