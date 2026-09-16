@@ -573,6 +573,32 @@ body {
 }
 #title-input:focus { outline: none; }
 
+/* ── Kanban ── */
+.kanban-panel { display: flex; flex-direction: column; position: fixed; inset: 0; z-index: 800; background: var(--bg); }
+.kanban-panel.hidden { display: none; }
+.kanban-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--bg2); flex-shrink: 0; }
+.kanban-title { font-size: 15px; font-weight: 600; color: var(--text); }
+.kanban-board { display: flex; gap: 16px; padding: 20px; overflow-x: auto; flex: 1; align-items: flex-start; }
+.kb-col { display: flex; flex-direction: column; width: 280px; min-width: 280px; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.kb-col-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--bg3); }
+.kb-col-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text2); }
+.kb-col-count { font-size: 11px; font-weight: 600; background: var(--border); color: var(--text2); border-radius: 10px; padding: 1px 7px; }
+.kb-col-cards { display: flex; flex-direction: column; gap: 8px; padding: 10px; min-height: 80px; flex: 1; }
+.kb-col-cards.drag-over { background: rgba(95,111,46,.08); outline: 2px dashed var(--accent); outline-offset: -4px; border-radius: 6px; }
+.kb-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: grab; position: relative; transition: box-shadow .15s, opacity .15s; }
+.kb-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.kb-card.dragging { opacity: .4; cursor: grabbing; }
+.kb-card-title { font-size: 13px; font-weight: 500; color: var(--text); margin-bottom: 6px; line-height: 1.4; word-break: break-word; padding-right: 18px; }
+.kb-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.kb-card-words { font-size: 11px; color: var(--text2); }
+.kb-card-tag { background: rgba(95,111,46,.12); color: var(--accent); border: 1px solid rgba(95,111,46,.2); border-radius: 10px; padding: 1px 6px; font-size: 9px; font-weight: 500; white-space: nowrap; }
+.kb-card-remove { position: absolute; top: 6px; right: 6px; background: none; border: none; color: var(--text2); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px 4px; border-radius: 4px; opacity: 0; transition: opacity .12s; }
+.kb-card:hover .kb-card-remove { opacity: 1; }
+.kb-card-remove:hover { color: #cf222e; background: rgba(207,34,46,.08); }
+.kb-add-btn { margin: 0 10px 10px; padding: 7px; background: none; border: 1px dashed var(--border); border-radius: 6px; color: var(--text2); font-size: 12px; cursor: pointer; text-align: left; transition: border-color .12s, color .12s; }
+.kb-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+.kb-empty { color: var(--text2); font-size: 12px; text-align: center; padding: 16px 0; }
+
 /* ── Modals ── */
 .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 900; background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
 .modal-backdrop.open { display: flex; }

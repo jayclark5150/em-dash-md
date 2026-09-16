@@ -1076,6 +1076,131 @@ document.getElementById('doc-browser-modal').addEventListener('click', (e) => {
   });
 }());
 
+// ── Kanban ────────────────────────────────────────────────────────────────────
+async function fsUpdateKanbanStatus(id, status) {
+  await db.collection('documents').doc(id).update({ kanbanStatus: status || null });
+}
+
+const KANBAN_COLS = [
+  { id: 'todo',        label: 'To Do' },
+  { id: 'in-progress', label: 'In Progress' },
+  { id: 'done',        label: 'Done' },
+];
+
+let kanbanPickTarget = null; // column status to assign when doc browser used as picker
+
+function openKanban() {
+  document.getElementById('kanban-panel').classList.remove('hidden');
+  renderKanban();
+}
+
+function closeKanban() {
+  document.getElementById('kanban-panel').classList.add('hidden');
+  kanbanPickTarget = null;
+}
+
+async function renderKanban() {
+  const board = document.getElementById('kanban-board');
+  board.innerHTML = '<div style="color:var(--text2);padding:20px">Loading…</div>';
+
+  const docs = await fsGetAll(2500);
+  const byStatus = {};
+  KANBAN_COLS.forEach(c => { byStatus[c.id] = []; });
+  docs.forEach(d => {
+    if (d.kanbanStatus && byStatus[d.kanbanStatus]) byStatus[d.kanbanStatus].push(d);
+  });
+
+  board.innerHTML = KANBAN_COLS.map(col => {
+    const cards = byStatus[col.id];
+    const cardsHtml = cards.length
+      ? cards.map(d => {
+          const tags = (d.tags || []).slice(0, 3).map(t => `<span class="kb-card-tag">${esc(t)}</span>`).join('');
+          const words = wordCount(d);
+          const title = (d.title || 'Untitled').replace(/\.md$/i, '');
+          return `<div class="kb-card" draggable="true" data-id="${esc(d.id)}" data-status="${esc(col.id)}">
+            <div class="kb-card-title">${esc(title)}</div>
+            <div class="kb-card-meta">
+              <span class="kb-card-words">${words.toLocaleString()} words</span>
+              ${tags}
+            </div>
+            <button class="kb-card-remove" data-id="${esc(d.id)}" title="Remove from board">×</button>
+          </div>`;
+        }).join('')
+      : `<div class="kb-empty">No cards</div>`;
+
+    return `<div class="kb-col">
+      <div class="kb-col-header">
+        <span class="kb-col-title">${esc(col.label)}</span>
+        <span class="kb-col-count">${cards.length}</span>
+      </div>
+      <div class="kb-col-cards" data-status="${esc(col.id)}">${cardsHtml}</div>
+      <button class="kb-add-btn" data-status="${esc(col.id)}">+ Add card</button>
+    </div>`;
+  }).join('');
+
+  // Drag-and-drop
+  board.querySelectorAll('.kb-card').forEach(card => {
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', card.dataset.id);
+      card.classList.add('dragging');
+    });
+    card.addEventListener('dragend', () => card.classList.remove('dragging'));
+
+    card.addEventListener('click', e => {
+      if (e.target.closest('.kb-card-remove')) return;
+      loadDoc(card.dataset.id).then(closeKanban);
+    });
+  });
+
+  board.querySelectorAll('.kb-card-remove').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      await fsUpdateKanbanStatus(btn.dataset.id, null);
+      renderKanban();
+    });
+  });
+
+  board.querySelectorAll('.kb-col-cards').forEach(zone => {
+    zone.addEventListener('dragover', e => {
+      e.preventDefault();
+      zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+    zone.addEventListener('drop', async e => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      const id = e.dataTransfer.getData('text/plain');
+      const newStatus = zone.dataset.status;
+      await fsUpdateKanbanStatus(id, newStatus);
+      renderKanban();
+    });
+  });
+
+  board.querySelectorAll('.kb-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      kanbanPickTarget = btn.dataset.status;
+      openDocBrowser();
+    });
+  });
+}
+
+// Patch loadDoc so that when used as a kanban picker it assigns instead of opens
+const _origLoadDoc = loadDoc;
+async function loadDoc(id) {
+  if (kanbanPickTarget) {
+    const status = kanbanPickTarget;
+    kanbanPickTarget = null;
+    closeDocBrowser();
+    await fsUpdateKanbanStatus(id, status);
+    renderKanban();
+    return;
+  }
+  return _origLoadDoc(id);
+}
+
+document.getElementById('kanban-btn').addEventListener('click', openKanban);
+document.getElementById('kanban-close-btn').addEventListener('click', closeKanban);
+
 // ── List continuation ─────────────────────────────────────────────────────────
 editor.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;

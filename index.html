@@ -191,6 +191,9 @@
   </div>
 
   <div class="hdr-right">
+    <button class="hdr-btn" id="kanban-btn" title="Kanban Board">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm3.75 11a.75.75 0 0 1-.75-.75V9a.75.75 0 0 1 1.5 0v3a.75.75 0 0 1-.75.75Zm3.75 0a.75.75 0 0 1-.75-.75V5a.75.75 0 0 1 1.5 0v7a.75.75 0 0 1-.75.75Zm3.75 0a.75.75 0 0 1-.75-.75V7.5a.75.75 0 0 1 1.5 0V12a.75.75 0 0 1-.75.75Z"/></svg>
+    </button>
     <button class="hdr-btn" id="focus-btn" title="Focus Mode (F11)">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
     </button>
@@ -325,6 +328,15 @@
       <button class="btn btn-primary"   id="new-modal-ok">Create</button>
     </div>
   </div>
+</div>
+
+<!-- Kanban board -->
+<div id="kanban-panel" class="kanban-panel hidden">
+  <div class="kanban-header">
+    <span class="kanban-title">Kanban Board</span>
+    <button class="hdr-btn" id="kanban-close-btn" title="Close">✕</button>
+  </div>
+  <div class="kanban-board" id="kanban-board"></div>
 </div>
 
 <!-- Document browser modal -->
