@@ -720,7 +720,7 @@ async function openDocBrowser() {
 
   // Stale-while-revalidate: kick off the server fetch immediately so it runs
   // in parallel with the cache paint, then swap in the fresh result once ready.
-  const serverFetch = fsGetAll(2500);
+  const serverFetch = fsGetAll(300);
   const paintedFromCache = await renderDocBrowserList('', { source: 'cache' });
   await renderDocBrowserList('', { skipLoadingState: paintedFromCache, prefetched: serverFetch });
 
@@ -867,10 +867,14 @@ async function renderDocBrowserList(query, opts) {
     </div>`;
   }).join('');
 
+  const docMap = new Map(docs.map(d => [d.id, d]));
   list.querySelectorAll('.file-item').forEach(el => {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.file-tag-btn, .file-tag-input')) return;
-      loadDoc(el.dataset.id);
+      if (kanbanPickTarget) { loadDoc(el.dataset.id); return; }
+      if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
+      const doc = docMap.get(el.dataset.id);
+      if (doc) applyDoc(doc); else loadDoc(el.dataset.id);
     });
   });
 
@@ -910,10 +914,7 @@ async function renderDocBrowserList(query, opts) {
   return true;
 }
 
-async function loadDoc(id) {
-  if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
-  const doc = await fsGet(id);
-  if (!doc) { showToast('Document not found'); return; }
+function applyDoc(doc) {
   clearTimeout(autoSaveTimer);
   currentDocId = doc.id;
   currentDocIsNew = false;
@@ -924,6 +925,13 @@ async function loadDoc(id) {
   document.getElementById('drive-delete-btn').style.display = 'inline-flex';
   closeDocBrowser();
   editor.focus();
+}
+
+async function loadDoc(id) {
+  if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
+  const doc = await fsGet(id);
+  if (!doc) { showToast('Document not found'); return; }
+  applyDoc(doc);
 }
 
 async function loadMostRecent() {
@@ -1148,7 +1156,9 @@ async function renderKanban() {
 
     card.addEventListener('click', e => {
       if (e.target.closest('.kb-card-remove')) return;
-      loadDoc(card.dataset.id).then(closeKanban);
+      const doc = docs.find(d => d.id === card.dataset.id);
+      if (doc) { if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return; applyDoc(doc); closeKanban(); }
+      else loadDoc(card.dataset.id).then(closeKanban);
     });
   });
 
