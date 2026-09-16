@@ -720,7 +720,7 @@ async function openDocBrowser() {
 
   // Stale-while-revalidate: kick off the server fetch immediately so it runs
   // in parallel with the cache paint, then swap in the fresh result once ready.
-  const serverFetch = fsGetAll(300);
+  const serverFetch = fsGetAll(2500);
   const paintedFromCache = await renderDocBrowserList('', { source: 'cache' });
   await renderDocBrowserList('', { skipLoadingState: paintedFromCache, prefetched: serverFetch });
 
