@@ -1,13 +1,9 @@
-config.js
-*.zip
-v1.3.0/
-markdown-pwa/
-*.code-workspace
-.vscode/
+node_modules/
+*.log
 .DS_Store
-firebase-config.js
-.firebase/
-
-# Local tooling / generated artifacts
-.claude/
-Claude outputs/
+.env
+.env.local
+service-account-key.json
+*.json.backup
+dist/
+build/
