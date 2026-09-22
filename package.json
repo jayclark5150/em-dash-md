@@ -1,6 +1,6 @@
 {
   "name": "em-dash-mcp-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP server for em-dash markdown editor - search and create documents",
   "main": "server.js",
   "type": "module",
@@ -11,7 +11,12 @@
   "dependencies": {
     "firebase-admin": "^12.0.0"
   },
-  "keywords": ["mcp", "em-dash", "firebase", "markdown"],
+  "keywords": [
+    "mcp",
+    "em-dash",
+    "firebase",
+    "markdown"
+  ],
   "author": "Jay Clark",
   "license": "MIT"
 }
