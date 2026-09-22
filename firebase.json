@@ -4,7 +4,21 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "**/*adminsdk*.json",
+      "Claude outputs/**",
+      "*.bak",
+      "*.dmg",
+      "Dockerfile*",
+      "start.sh",
+      "server.js",
+      "http-wrapper.js",
+      "*.py",
+      "*.patch",
+      "package*.json",
+      "firestore.*",
+      "CLAUDE.md",
+      "regression-checklist.md"
     ]
   },
   "firestore": {

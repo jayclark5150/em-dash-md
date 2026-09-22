@@ -7,3 +7,6 @@ service-account-key.json
 *.json.backup
 dist/
 build/
+*adminsdk*.json
+*.bak
+*.dmg
