@@ -928,6 +928,17 @@ function applyDoc(doc) {
 }
 
 async function loadDoc(id) {
+  // When the doc browser is being used as a Kanban picker, assign the doc to
+  // the chosen column instead of opening it. (Formerly a separate wrapper that
+  // redeclared loadDoc; hoisting made it call itself forever. Fixed v3.21.1.)
+  if (kanbanPickTarget) {
+    const status = kanbanPickTarget;
+    kanbanPickTarget = null;
+    closeDocBrowser();
+    await fsUpdateKanbanStatus(id, status);
+    renderKanban();
+    return;
+  }
   if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
   const doc = await fsGet(id);
   if (!doc) { showToast('Document not found'); return; }
@@ -1194,19 +1205,6 @@ async function renderKanban() {
   });
 }
 
-// Patch loadDoc so that when used as a kanban picker it assigns instead of opens
-const _origLoadDoc = loadDoc;
-async function loadDoc(id) {
-  if (kanbanPickTarget) {
-    const status = kanbanPickTarget;
-    kanbanPickTarget = null;
-    closeDocBrowser();
-    await fsUpdateKanbanStatus(id, status);
-    renderKanban();
-    return;
-  }
-  return _origLoadDoc(id);
-}
 
 document.getElementById('kanban-btn').addEventListener('click', openKanban);
 document.getElementById('kanban-close-btn').addEventListener('click', closeKanban);

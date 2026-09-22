@@ -191,7 +191,7 @@ No regression baseline exists for a brand-new feature, so there's nothing to com
   `sw.js` serves same-origin assets cache-first, so changed JS never
   reaches existing browsers unless `CACHE` is incremented.
 - [ ] **`node --check` on every changed JS file** before deploy.
-- [ ] **OPEN BUG (found 2026-09-22, not yet fixed)**: `app.js` declares
+- [x] **RESOLVED v3.21.1 (was OPEN BUG, found 2026-09-22)**: `app.js` declares
   `async function loadDoc` twice (lines ~930 and ~1199, from v3.20.0
   Kanban). Function hoisting makes `_origLoadDoc` point at the wrapper
   itself, so any non-Kanban `loadDoc()` call recurses infinitely.
@@ -258,11 +258,20 @@ changes. Patch is line-scoped to apply on top.
   no longer reach Firestore. Leave it that way until the auth fix below.
 - An Anthropic key was also pasted into chat and the browser console
   history; Jay rotated it.
+- Hidden folders were also published: `**/.*` skips hidden files but not
+  files inside hidden folders. Confirmed HTTP 200 for `.git/HEAD` and
+  `.claude/settings.local.json`. Assessed: the GitHub repo is already
+  public and a full-history scan (29 commits) found no private keys or
+  Anthropic/OpenAI keys; unpushed local commits contain no secrets; the
+  settings file holds only permission rules (reveals username and path).
+  Fixed with `**/.*/**` plus explicit `.git/**`, `.claude/**`,
+  `.firebase/**`. Deploy dropped from 258 files to 27 (app files only).
 
 **New checks**
-- [ ] **Hosting exposure check before every deploy**: run
-  `firebase deploy --only hosting --dry-run` is not available, so after
-  deploying, curl any new non-app file at the site root and confirm 404.
+- [ ] **Hosting exposure check after every deploy**: the deploy log's
+  "found N files" must equal the number of real app files (27 as of
+  v3.21.1). Any jump means something leaked in. Curl any new non-app file
+  at the live site and confirm 404.
   Any `*.json` other than `manifest.json` returning 200 is a failure.
 - [ ] **No key files in the repo folder**: `ls *key*.json *adminsdk*.json`
   must return nothing. Keys live in `~/.secrets/` or Secret Manager.
@@ -276,9 +285,8 @@ changes. Patch is line-scoped to apply on top.
   derive `userId` from it, restrict CORS to `https://em-dash-md.web.app`,
   and run on the Cloud Run service identity with no key file. Do NOT add
   CORS alone; that would expose the unauthenticated server to any site.
-- [ ] **OPEN**: `app.js` duplicate `loadDoc` recursion (see 2026-09-22
-  entry above) now confirmed live: `loadMostRecent` throws
-  `RangeError: Maximum call stack size exceeded` on startup.
+- [x] **RESOLVED v3.21.1**: `app.js` duplicate `loadDoc` recursion (see
+  log below).
 
 **Reply-parsing fix (scoped re-audit: only `callClaudeAPI` and `sw.js`)**
 - OpenSpec: replace `data.content[0].text` with a join of all text blocks;
@@ -287,3 +295,50 @@ changes. Patch is line-scoped to apply on top.
 - QA: executed in Node against six stubbed responses (text only, thinking
   then text, two text blocks, no text, JSON error, non-JSON error). All
   passed. `node --check` passed. Not yet verified in a live browser.
+
+## Log: 2026-09-22: fixed loadDoc infinite recursion (v3.21.1)
+
+**OpenSpec**
+- Purpose: stop `loadDoc` calling itself forever, which broke opening the
+  most recent doc on startup and opening any uncached doc from the doc
+  browser or Kanban board.
+- Cause: v3.20.0 added a second `async function loadDoc` as a Kanban-picker
+  wrapper. Function hoisting made `_origLoadDoc` point at the wrapper
+  itself, so any call outside Kanban-pick mode recursed until
+  `RangeError: Maximum call stack size exceeded`.
+- Change: moved the Kanban-picker branch to the top of the original
+  `loadDoc`, deleted the wrapper and `_origLoadDoc`. Kanban check still runs
+  before the unsaved-changes prompt, as before. `sw.js` cache v6 to v7;
+  status bar label v3.21.1.
+- Risk tier: Medium (touches the document-loading data path), so full
+  re-audit of `loadDoc` and all three callers.
+- Acceptance: `node --check app.js` passes; every `loadDoc` path behaves
+  as intended; `loadMostRecent` opens the newest doc.
+
+**Audit (full, data-path change)**: callers at app.js doc browser (cached
+and uncached branches), Kanban card open, and `loadMostRecent` all resolve
+`loadDoc` by name at call time, so all now reach the single fixed function.
+`kanbanPickTarget` is a `let` declared later in the file but is only read
+at call time, after the script has finished loading, so no TDZ error.
+
+**QA**: executed. Reproduced the old code's exact live error
+(`RangeError: Maximum call stack size exceeded`) as the baseline, then ran
+the real fixed `loadDoc` and `loadMostRecent` from app.js against stubs in
+8 cases (normal open, Kanban assign, Kanban target clears, dirty+cancel,
+dirty+OK, missing doc, newest doc on startup, empty library). 8/8 passed.
+`node --check app.js` passes (it failed before this fix). Not yet clicked
+through in a live browser.
+
+**Regression gate**: not applicable (web app, not an unattended script).
+
+**Checks added**
+- [ ] `node --check app.js` must pass before every deploy; a duplicate
+  top-level function declaration is a hard stop.
+- [ ] No function in app.js may be declared twice
+  (`grep -c "function loadDoc(" app.js` must be 1; apply the same idea to
+  any future wrapper). Wrap by extending the original function, never by
+  redeclaring it.
+- [ ] Manual smoke test after deploy: reload the app and confirm the most
+  recent doc opens with no console error; open an uncached doc from the
+  doc browser; assign a doc to a Kanban column via the picker.
+
