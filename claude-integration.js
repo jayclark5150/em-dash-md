@@ -56,36 +56,20 @@
     }
 
     function addButton() {
-      // Try to find header buttons container
-      let buttonContainer = document.getElementById('header-buttons');
-
-      // If not found, try common alternatives
-      if (!buttonContainer) {
-        buttonContainer = document.querySelector('[data-id="header-buttons"]');
-      }
-      if (!buttonContainer) {
-        buttonContainer = document.querySelector('.header-buttons');
-      }
-      if (!buttonContainer) {
-        buttonContainer = document.querySelector('header');
-      }
-
-      if (!buttonContainer) {
-        console.warn('Could not find header to add Claude button. Add manually or adjust selector.');
+      // Find the header-bar
+      const headerBar = document.getElementById('header-bar');
+      
+      if (!headerBar) {
+        console.warn('Could not find header-bar to add Claude button.');
         return;
       }
 
-      // Create Claude button
+      // Create Claude button with em-dash button styles
       const claudeBtn = document.createElement('button');
       claudeBtn.id = 'claude-chat-btn';
-      claudeBtn.className = 'header-btn claude-btn';
+      claudeBtn.className = 'hdr-btn claude-btn';
       claudeBtn.title = 'Ask Claude (Search, create, manage documents)';
-      claudeBtn.innerHTML = `
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" style="margin-right: 4px;">
-          <path d="M10 0C4.48 0 0 4.48 0 10s4.48 10 10 10 10-4.48 10-10S15.52 0 10 0zm3.5 9c.83 0 1.5-.67 1.5-1.5S14.33 5 13.5 5 12 5.67 12 6.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S7.33 5 6.5 5 5 5.67 5 6.5 5.67 8 6.5 8zm3.5 6.5c-2.33 0-4.31-1.46-5.11-3.5h10.22c-.8 2.04-2.78 3.5-5.11 3.5z"/>
-        </svg>
-        Ask Claude
-      `;
+      claudeBtn.innerHTML = '🤖 Ask Claude';
 
       claudeBtn.addEventListener('click', () => {
         if (window.claudeModal) {
@@ -93,8 +77,8 @@
         }
       });
 
-      // Insert button into header
-      buttonContainer.appendChild(claudeBtn);
+      // Append button to header-bar
+      headerBar.appendChild(claudeBtn);
     }
   }
 

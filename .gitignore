@@ -10,3 +10,9 @@ build/
 *adminsdk*.json
 *.bak
 *.dmg
+firebase-config.js
+.firebase/
+Claude outputs/
+*.patch
+.fuse_hidden*
+Dockerfile-1
