@@ -241,3 +241,49 @@ script). Checks above added so this class of failure is re-tested.
 the build environment to compare against the repo; the repo `index.html`
 lacks the Claude script tags, so Jay's local copy likely has uncommitted
 changes. Patch is line-scoped to apply on top.
+
+## Log: 2026-09-22: incident follow-up and reply-parsing fix (v1.1.2)
+
+**Security incident (same day, High Risk)**
+- `firebase.json` published the whole project folder (`"public": "."`).
+  Confirmed public via HTTP 200: `em-dash-md-firebase-adminsdk-fbsvc-a6d5396cc9.json`
+  and `service-account-key.json` (the same admin key, key id prefix
+  `a6d5396cc9`). The `Claude outputs/` diary backups
+  (`deleted-duplicates-2026-09-13.json`, `deleted-6-docs-2026-09-13.json`)
+  were also published and were likely public in earlier deploys too.
+- Containment: key deleted in Google Cloud IAM; key files moved to
+  `~/.secrets/`; hosting ignore list expanded; redeployed; exposed paths
+  verified 404.
+- Side effect: the Cloud Run MCP server image bakes in that key, so it can
+  no longer reach Firestore. Leave it that way until the auth fix below.
+- An Anthropic key was also pasted into chat and the browser console
+  history; Jay rotated it.
+
+**New checks**
+- [ ] **Hosting exposure check before every deploy**: run
+  `firebase deploy --only hosting --dry-run` is not available, so after
+  deploying, curl any new non-app file at the site root and confirm 404.
+  Any `*.json` other than `manifest.json` returning 200 is a failure.
+- [ ] **No key files in the repo folder**: `ls *key*.json *adminsdk*.json`
+  must return nothing. Keys live in `~/.secrets/` or Secret Manager.
+- [ ] **Reply parsing**: the modal must never render "undefined". It joins
+  all `type: "text"` content blocks and shows a stop_reason message if
+  there are none.
+- [ ] **API errors show Anthropic's message**, not just the status code.
+- [ ] **OPEN (High Risk, needs CAB)**: MCP server (`http-wrapper.js` +
+  `server.js`) has no authentication and takes `userId` from the request
+  body while running as Firebase admin. Must verify a Firebase ID token,
+  derive `userId` from it, restrict CORS to `https://em-dash-md.web.app`,
+  and run on the Cloud Run service identity with no key file. Do NOT add
+  CORS alone; that would expose the unauthenticated server to any site.
+- [ ] **OPEN**: `app.js` duplicate `loadDoc` recursion (see 2026-09-22
+  entry above) now confirmed live: `loadMostRecent` throws
+  `RangeError: Maximum call stack size exceeded` on startup.
+
+**Reply-parsing fix (scoped re-audit: only `callClaudeAPI` and `sw.js`)**
+- OpenSpec: replace `data.content[0].text` with a join of all text blocks;
+  surface the API error message; pop the unanswered user turn on error;
+  bump `sw.js` cache v5 to v6.
+- QA: executed in Node against six stubbed responses (text only, thinking
+  then text, two text blocks, no text, JSON error, non-JSON error). All
+  passed. `node --check` passed. Not yet verified in a live browser.

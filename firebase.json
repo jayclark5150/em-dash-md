@@ -18,7 +18,14 @@
       "package*.json",
       "firestore.*",
       "CLAUDE.md",
-      "regression-checklist.md"
+      "regression-checklist.md",
+      "service-account-key.json",
+      "**/*service-account*.json",
+      ".env*",
+      "**/.*/**",
+      ".git/**",
+      ".claude/**",
+      ".firebase/**"
     ]
   },
   "firestore": {

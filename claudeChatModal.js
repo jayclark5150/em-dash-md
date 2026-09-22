@@ -162,11 +162,24 @@ When the user asks to search, create, or list documents, tell them you'll search
     });
 
     if (!response.ok) {
-      throw new Error(`Claude API error: ${response.status} ${response.statusText}`);
+      let detail = response.statusText;
+      try {
+        const err = await response.json();
+        if (err && err.error && err.error.message) detail = err.error.message;
+      } catch (_) { /* body was not JSON; keep statusText */ }
+      // Drop the unanswered user turn so history stays valid for the next request
+      this.conversationHistory.pop();
+      throw new Error(`Claude API error: ${response.status} ${detail}`);
     }
 
     const data = await response.json();
-    const assistantMessage = data.content[0].text;
+    // Replies can contain several content blocks, and the first is not always text.
+    // Join every text block; fall back to a clear message instead of "undefined".
+    const textBlocks = Array.isArray(data.content)
+      ? data.content.filter(b => b && b.type === 'text' && typeof b.text === 'string')
+      : [];
+    const assistantMessage = textBlocks.map(b => b.text).join('\n\n').trim()
+      || `(No text in reply. stop_reason: ${data.stop_reason || 'unknown'})`;
 
     // Add to conversation history
     this.conversationHistory.push({
