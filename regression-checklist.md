@@ -172,3 +172,72 @@ No regression baseline exists for a brand-new feature, so there's nothing to com
 **Deploy status**: NOT yet deployed. Files changed: index.html, app.js, styles.css, sw.js (cache bump v3→v4), README.md (changelog + feature bullet). Jay needs to run `firebase deploy` from `~/Documents/em-dash-md` to ship this, per the standing preference that I not hold deploy credentials.
 
 **Residual risk**: this has not been tested end-to-end against live Firebase Auth (only statically reviewed). Recommend Jay do one real test run (ideally with a throwaway test account, not his main one) before trusting the flow against real data.
+
+## Checks: Claude modal / network access (added 2026-09-22)
+
+- [ ] **CSP covers every outbound host**: every `https://` host that any
+  shipped JS file calls with `fetch()` must appear in `connect-src` in
+  `index.html`. A missing host fails silently as "Failed to fetch" in the
+  UI. Check: extract hosts from `claudeChatModal.js` (and any new network
+  code) and confirm each is listed.
+- [ ] **Browser-direct Anthropic calls carry the opt-in header**: any
+  `fetch` to `api.anthropic.com` from the browser must send
+  `anthropic-dangerous-direct-browser-access: true`, or the CORS preflight
+  fails. (Retire this check if the call moves server-side.)
+- [ ] **Model string is current**: the `model` in `claudeChatModal.js` must
+  be a currently available model, not a retired one
+  (`claude-3-5-sonnet-20241022` was retired and must not reappear).
+- [ ] **Service worker cache bumped on any same-origin JS/CSS change**:
+  `sw.js` serves same-origin assets cache-first, so changed JS never
+  reaches existing browsers unless `CACHE` is incremented.
+- [ ] **`node --check` on every changed JS file** before deploy.
+- [ ] **OPEN BUG (found 2026-09-22, not yet fixed)**: `app.js` declares
+  `async function loadDoc` twice (lines ~930 and ~1199, from v3.20.0
+  Kanban). Function hoisting makes `_origLoadDoc` point at the wrapper
+  itself, so any non-Kanban `loadDoc()` call recurses infinitely.
+  `node --check app.js` fails on this. Fix before next app.js release,
+  then confirm `node --check app.js` passes.
+
+## Log: 2026-09-22: Claude modal "Failed to fetch" fixes (v1.1.1)
+
+**OpenSpec**
+- Purpose: stop the Ask Claude modal failing with "Failed to fetch"
+  (reported from Edge at work).
+- Scope: fix 1, add `https://api.anthropic.com` and the Cloud Run MCP host
+  to CSP `connect-src`; fix 2, add the
+  `anthropic-dangerous-direct-browser-access` header; fix 3, replace the
+  retired `claude-3-5-sonnet-20241022` with `claude-sonnet-5`; plus bump
+  `sw.js` cache v4 to v5 so the changed JS reaches existing browsers.
+  Out of scope: server-side proxy, API key storage, MCP auth, `open`
+  keyword routing, work network filtering.
+- Risk tier: High (CSP is a security control). CAB review required.
+- Constraints: minimal line edits only; no other CSP directive changes;
+  no wildcard hosts added.
+- Acceptance criteria: CSP allows exactly the two hosts the modal calls;
+  request carries the header and new model; syntax checks pass on changed
+  files; cache name changed.
+
+**Audit (full, High Risk)**: diff is 3 files, 5 lines. CSP adds two exact
+hosts, no wildcards; all other directives byte-identical. Header and model
+edits confined to `callClaudeAPI`. MCP fetch path unchanged. Security
+note: widening `connect-src` expands where page script may send data;
+both hosts are first-party to this app, but the API key remains exposed in
+`localStorage` (pre-existing, accepted residual risk until the server-side
+proxy work).
+
+**QA**: executed in Node with a stubbed `fetch`: URL, all headers, model,
+reply parsing and history all verified; every host in
+`claudeChatModal.js` confirmed present in `connect-src`. `node --check`
+passed for claudeChatModal.js, claude-integration.js, sw.js. NOT run
+against the live Anthropic API or in a real browser (no key or browser
+available in the build environment). Live verification: deploy, hard
+refresh Edge, send a test message, confirm no CSP or CORS error in F12
+Console.
+
+**Regression gate**: not applicable (web app change, not an unattended
+script). Checks above added so this class of failure is re-tested.
+
+**Deploy status**: NOT deployed. Deployed site could not be fetched from
+the build environment to compare against the repo; the repo `index.html`
+lacks the Claude script tags, so Jay's local copy likely has uncommitted
+changes. Patch is line-scoped to apply on top.
