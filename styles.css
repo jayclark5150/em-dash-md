@@ -929,6 +929,61 @@ body.theme-light .btn-secondary { background: #efefef; }
   .hdr-center { display: none; }
 }
 
+/* Mobile-specific improvements: tap targets, keyboard handling, editor/preview toggle */
+@media (max-width: 768px) {
+  /* Show editor/preview toggle button on mobile */
+  #editor-preview-toggle { display: inline-flex !important; }
+
+  /* Focus mode exit button: make it larger and more prominent on mobile */
+  #focus-exit-btn {
+    width: 56px;
+    height: 56px;
+    bottom: 20px;
+    right: 20px;
+    font-size: 28px;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Handle on-screen keyboard by adjusting layout */
+  body.keyboard-visible #header-bar {
+    position: sticky;
+    z-index: 100;
+  }
+
+  /* Prevent layout shift when keyboard opens */
+  body.keyboard-visible {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Editor/preview toggle: ensure button is touch-friendly */
+  #editor-preview-toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Mobile pane hiding via class .mobile-hide-preview or .mobile-hide-editor */
+  body.mobile-editor-only #preview-wrapper {
+    display: none;
+  }
+
+  body.mobile-editor-only #editor-pane {
+    width: 100%;
+  }
+
+  body.mobile-preview-only #editor-pane {
+    display: none;
+  }
+
+  body.mobile-preview-only #preview-wrapper {
+    width: 100%;
+  }
+}
+
 /* ── Auth overlay — blocks UI until signed in ── */
 #auth-overlay {
   display: flex;

@@ -342,3 +342,25 @@ through in a live browser.
   recent doc opens with no console error; open an uncached doc from the
   doc browser; assign a doc to a Kanban column via the picker.
 
+## Mobile UI Improvements (2026-09-24)
+
+**Purpose**: Make em-dash-md genuinely mobile-friendly on phones (<=768px).
+
+**Changes**:
+- Added editor/preview toggle button for mobile (hidden on desktop)
+- Increased Focus Mode exit button to 56px on mobile for easier tapping
+- Added visualViewport API keyboard detection to prevent layout shift
+- Added localStorage persistence for editor/preview mode preference
+- Added CSS classes for mobile-editor-only and mobile-preview-only modes
+
+**Regression gate**: Mobile features only; desktop unchanged.
+
+**Checks added**
+- [ ] Desktop (>768px): editor/preview toggle button must be hidden; Focus Mode exit stays as-is; all desktop features work unchanged
+- [ ] Mobile (<768px): editor/preview toggle visible in header; clicking cycles between editor-only and preview-only views
+- [ ] Mobile view preference persists across page reload (localStorage)
+- [ ] Focus Mode exit button is 56px×56px and circular on mobile
+- [ ] On-screen keyboard appearance doesn't push header off-screen (visualViewport test)
+- [ ] All tap targets ≥44px on mobile
+- [ ] No console errors on mobile browsers (Chrome DevTools device emulation)
+

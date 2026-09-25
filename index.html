@@ -191,6 +191,9 @@
   </div>
 
   <div class="hdr-right">
+    <button class="hdr-btn" id="editor-preview-toggle" title="Toggle editor/preview (mobile only)" style="display:none">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
     <button class="hdr-btn" id="kanban-btn" title="Kanban Board">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.75V13.5h13.75a.75.75 0 0 1 0 1.5H.75a.75.75 0 0 1-.75-.75V1.75a.75.75 0 0 1 1.5 0Zm3.75 11a.75.75 0 0 1-.75-.75V9a.75.75 0 0 1 1.5 0v3a.75.75 0 0 1-.75.75Zm3.75 0a.75.75 0 0 1-.75-.75V5a.75.75 0 0 1 1.5 0v7a.75.75 0 0 1-.75.75Zm3.75 0a.75.75 0 0 1-.75-.75V7.5a.75.75 0 0 1 1.5 0V12a.75.75 0 0 1-.75.75Z"/></svg>
     </button>
@@ -396,7 +399,7 @@
 <div id="toast"></div>
 
 <!-- Focus mode exit button (only visible in focus mode) -->
-<button id="focus-exit-btn">✕ Exit Focus</button>
+<button id="focus-exit-btn" title="Exit Focus Mode">✕</button>
 
 <script src="app.js"></script>
 </body>

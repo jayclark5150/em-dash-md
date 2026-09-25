@@ -2029,4 +2029,66 @@ async function bootApp() {
     renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
     window.history.replaceState({}, '', window.location.pathname);
   }
+
+  initializeMobileUI();
+}
+
+// ── Mobile UI Improvements ────────────────────────────────────────────────────
+let mobileMode = 'editor'; // 'editor' or 'preview'
+
+function initializeMobileUI() {
+  // Only apply mobile UI on screens <= 768px
+  if (window.innerWidth > 768) return;
+
+  const toggleBtn = document.getElementById('editor-preview-toggle');
+  if (!toggleBtn) return;
+
+  // Load saved preference from localStorage
+  const saved = localStorage.getItem('mobile-view-mode');
+  if (saved) mobileMode = saved;
+
+  // Set initial state
+  updateMobileViewMode();
+
+  // Handle toggle button clicks
+  toggleBtn.addEventListener('click', () => {
+    mobileMode = mobileMode === 'editor' ? 'preview' : 'editor';
+    localStorage.setItem('mobile-view-mode', mobileMode);
+    updateMobileViewMode();
+  });
+
+  // Handle keyboard visibility using visualViewport API
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleKeyboardVisibility);
+  }
+}
+
+function updateMobileViewMode() {
+  const body = document.body;
+  body.classList.remove('mobile-editor-only', 'mobile-preview-only');
+
+  if (mobileMode === 'editor') {
+    body.classList.add('mobile-editor-only');
+  } else {
+    body.classList.add('mobile-preview-only');
+  }
+
+  // Force re-render to ensure content is visible
+  scheduleRender();
+}
+
+function handleKeyboardVisibility() {
+  const viewport = window.visualViewport;
+  if (!viewport) return;
+
+  const windowHeight = window.innerHeight;
+  const viewportHeight = viewport.height;
+  const keyboardHeight = windowHeight - viewportHeight;
+
+  // If keyboard is visible (height difference > 50px), add class
+  if (keyboardHeight > 50) {
+    document.body.classList.add('keyboard-visible');
+  } else {
+    document.body.classList.remove('keyboard-visible');
+  }
 }
