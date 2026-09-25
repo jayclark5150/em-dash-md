@@ -8,7 +8,7 @@
     style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com;
     font-src 'self' https://fonts.gstatic.com;
     img-src 'self' data: https:;
-    connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://em-dash-md.firebaseapp.com https://api.anthropic.com https://mcp-server-1074234800313.europe-west1.run.app;
+    connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://em-dash-md.firebaseapp.com;
     frame-src https://accounts.google.com https://em-dash-md.firebaseapp.com;
     manifest-src 'self';
     worker-src 'self';
@@ -399,9 +399,5 @@
 <button id="focus-exit-btn">✕ Exit Focus</button>
 
 <script src="app.js"></script>
-
-<!-- Claude Modal Integration -->
-<script src="./claudeChatModal.js"></script>
-<script src="./claude-integration.js"></script>
 </body>
 </html>
