@@ -396,3 +396,33 @@ through in a live browser.
 - [ ] Desktop (>600px): sidebar collapses inline (pushes content right); no overlay
 - [ ] No layout regression: header, editor, preview, statusbar, focus mode all unaffected
 - [ ] No console errors on load
+
+## Log: 2026-09-27: v3.23.0 hotfix, sidebar hover actions invisible
+
+**Cause**: CSS/JS class mismatch. JS renders each tree row as `.sidebar-item`
+inside `.sb-node`; the CSS only revealed `.sb-actions` on
+`.sb-node-row:hover`, a class nothing renders. Static review (`node --check`,
+ID cross-check) could not catch this because it is a selector that simply
+never matches.
+
+**Fix (styles.css + sw.js only, scoped re-audit)**: hover/reveal selectors
+now also target `.sb-node .sidebar-item`; chevron button reset (no default
+border/background); action icons at 0.8 opacity; SW cache v9 to v10 so
+browsers holding the broken v9 CSS pick up the fix.
+
+**QA (executed)**: Playwright/Chromium harness loads the real sidebar markup
+from index.html, the real sidebar functions from app.js, and styles.css,
+then hovers a row. Deployed CSS: `.sb-actions` display `none`, "+" not
+visible (bug reproduced). Fixed CSS: display `flex`, "+" visible. Screenshot
+reviewed. Live site not reachable from the build environment, so the
+post-deploy check is still manual.
+
+**Checks added**
+- [ ] Every CSS selector for new JS-rendered UI must use a class the JS
+  actually emits (grep the class in app.js before shipping CSS for it).
+- [ ] New interactive UI gets a headless-browser hover/click check before
+  deploy, not only `node --check`.
+- [ ] After deploy, confirm the file changes actually shipped: `firebase
+  deploy` uploads what is on disk, and git showing "nothing to commit" is
+  not proof the deployed version is current.
+- [ ] SW cache is `em-dash-md-v10` (supersedes the v9 check above).
