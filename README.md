@@ -21,6 +21,7 @@ A cloud-first Markdown editor that lives in your browser. Sign in once and your 
 - **Installable** — Works as a PWA on desktop, iPhone, and iPad
 - **Preview zoom** — Scale the preview pane independently of the editor
 - **Document tags** — Tag documents and filter your library by tag; tags are stored in Firestore alongside the document
+- **Sidebar navigation** — persistent left panel showing your document list with search, new-document button, and browse-all link; collapsible via toolbar button or Ctrl/Cmd+\
 - **Delete My Account** — permanently delete your account and all documents from within the app, after typed confirmation and re-authentication
 
 ---
@@ -38,6 +39,7 @@ A cloud-first Markdown editor that lives in your browser. Sign in once and your 
 | Italic | Ctrl/Cmd+I |
 | Zoom in / out | Ctrl/Cmd+= / Ctrl/Cmd+- |
 | Reset zoom | Ctrl/Cmd+0 |
+| Toggle sidebar | Ctrl/Cmd+\ |
 
 ---
 
@@ -110,6 +112,9 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 ---
 
 ## Changelog
+
+### v3.22.0
+- **Sidebar navigation** — persistent left panel (Notion/Anytype-style) shows your recent documents, a search field, a new-document button, and a "Browse all" link to the full document browser; collapses inline on desktop or slides in as an overlay on mobile; state persists across sessions
 
 ### v3.19.2
 - **Resizable document browser** — drag the grip in the bottom-right corner of the Open Document window to resize it; the chosen size is remembered across sessions
