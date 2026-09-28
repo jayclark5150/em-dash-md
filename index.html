@@ -343,7 +343,7 @@
 
 <!-- Status bar -->
 <div id="statusbar">
-  <span id="app-version">v3.22.0</span>
+  <span id="app-version">v3.23.0</span>
   <span id="word-count" title="Click to set a word goal">Words: 0</span>
   <span id="char-count">Chars: 0</span>
   <span id="cursor-pos">Ln 1, Col 1</span>
@@ -365,6 +365,18 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" id="new-modal-cancel">Cancel</button>
       <button class="btn btn-primary"   id="new-modal-ok">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Move page modal -->
+<div id="move-modal" class="modal-backdrop">
+  <div class="modal" style="width:420px">
+    <div class="modal-title" id="move-modal-title">Move page to&hellip;</div>
+    <div id="move-modal-list" style="max-height:300px;overflow-y:auto;margin:8px 0"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="move-modal-cancel">Cancel</button>
+      <button class="btn btn-primary"   id="move-modal-ok">Move</button>
     </div>
   </div>
 </div>
