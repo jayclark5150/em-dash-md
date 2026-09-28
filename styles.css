@@ -614,6 +614,142 @@ body.theme-light #sidebar {
   }
 }
 
+/* ── Sidebar tree nodes ── */
+.sb-node {
+  position: relative;
+}
+.sb-node-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s;
+  min-height: 30px;
+}
+.sb-node-row:hover {
+  background: var(--bg3);
+}
+.sb-chevron {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  transition: transform 0.15s;
+  border-radius: 3px;
+}
+.sb-chevron:hover {
+  background: var(--bg4, #d0d0d0);
+  color: var(--text);
+}
+.sb-chevron.expanded {
+  transform: rotate(90deg);
+}
+.sb-chevron-placeholder {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+.sb-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  margin-right: 4px;
+}
+.sb-node-title {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 2px;
+  line-height: 1.3;
+}
+.sb-actions {
+  flex-shrink: 0;
+  display: none;
+  align-items: center;
+  gap: 1px;
+  padding-right: 4px;
+}
+.sb-node-row:hover .sb-actions {
+  display: flex;
+}
+.sb-action-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text3);
+  padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.sb-action-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.sb-children {
+  overflow: hidden;
+}
+.sb-children.sb-hidden {
+  display: none;
+}
+
+/* Move-to modal list */
+.move-option {
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.1s;
+}
+.move-option:hover {
+  background: var(--bg3);
+}
+.move-option.move-option-selected {
+  background: var(--accent);
+  color: #fff;
+}
+.move-option.move-option-current {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Dark theme overrides for tree and move modal */
+body.theme-dark .sb-node-row:hover { background: #2a2a2a; }
+body.theme-dark .sb-chevron { color: #666; }
+body.theme-dark .sb-chevron:hover { background: #333; color: #ccc; }
+body.theme-dark .sb-icon { color: #666; }
+body.theme-dark .sb-node-title { color: #ccc; }
+body.theme-dark .sb-action-btn { color: #666; }
+body.theme-dark .move-option { color: #ccc; }
+body.theme-dark .move-option:hover { background: #2a2a2a; }
+
+/* Light theme overrides */
+body.theme-light .sb-chevron { color: #999; }
+body.theme-light .sb-chevron:hover { background: #e0e0e0; color: #444; }
+body.theme-light .sb-icon { color: #999; }
+body.theme-light .sb-node-title { color: #1a1a1a; }
+body.theme-light .sb-action-btn { color: #999; }
+
 /* ── Main content row ── */
 #main-content {
   flex: 1;

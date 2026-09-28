@@ -39,14 +39,21 @@ async function fsGet(id) {
   return { id: snap.id, ...snap.data() };
 }
 
-async function fsPut(id, title, content, isNew) {
+async function fsPut(id, title, content, isNew, parentId) {
   const now = firebase.firestore.FieldValue.serverTimestamp();
   const ref = db.collection('documents').doc(id);
   if (isNew) {
-    await ref.set({ userId: auth.currentUser.uid, title, content, createdAt: now, updatedAt: now });
+    const data = { userId: auth.currentUser.uid, title, content, createdAt: now, updatedAt: now };
+    if (parentId) data.parentId = parentId;
+    await ref.set(data);
   } else {
     await ref.update({ title, content, updatedAt: now });
   }
+}
+
+async function fsUpdateParent(id, parentId) {
+  const val = parentId || firebase.firestore.FieldValue.delete();
+  await db.collection('documents').doc(id).update({ parentId: val });
 }
 
 async function fsDelete(id) {
@@ -364,6 +371,7 @@ auth.onAuthStateChanged(async (user) => {
 let currentDocId   = null;
 let currentDocIsNew = true; // true until the doc has been written to Firestore at least once
 let currentTitle   = 'New Document';
+let currentParentId = null; // parentId of the currently open doc (null = root)
 let isDirty        = false;
 let autoSaveTimer  = null;
 let previewEditing = false;
@@ -656,7 +664,7 @@ async function performSave(silent = false) {
   showSaveStatus('Saving…');
   try {
     if (!currentDocId) { currentDocId = crypto.randomUUID(); currentDocIsNew = true; }
-    await fsPut(currentDocId, title, content, currentDocIsNew);
+    await fsPut(currentDocId, title, content, currentDocIsNew, currentParentId);
     currentDocIsNew = false;
     isDirty = false;
     showSaveStatus('Saved');
@@ -920,6 +928,7 @@ function applyDoc(doc) {
   clearTimeout(autoSaveTimer);
   currentDocId = doc.id;
   currentDocIsNew = false;
+  currentParentId = doc.parentId || null;
   editor.value = doc.content || '';
   setTitle(doc.title || 'Untitled');
   isDirty = false;
@@ -2112,6 +2121,348 @@ function handleKeyboardVisibility() {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 let _sidebarDocs = [];        // cached doc list for the sidebar
 let _sidebarFilter = '';      // current search filter text
+let _sidebarExpanded = new Set(JSON.parse(localStorage.getItem('sidebar-expanded') || '[]'));
+
+function _saveExpandedState() {
+  localStorage.setItem('sidebar-expanded', JSON.stringify([..._sidebarExpanded]));
+}
+
+// Build a tree from a flat doc list. Docs missing from the id map (orphans) are
+// promoted to root so they don't silently disappear after a parent is deleted.
+function buildDocTree(docs) {
+  const byId = new Map(docs.map(d => [d.id, d]));
+  const childrenOf = new Map(); // parentId -> [doc, ...]
+  const roots = [];
+
+  for (const doc of docs) {
+    const pid = doc.parentId && byId.has(doc.parentId) ? doc.parentId : null;
+    if (!pid) {
+      roots.push(doc);
+    } else {
+      if (!childrenOf.has(pid)) childrenOf.set(pid, []);
+      childrenOf.get(pid).push(doc);
+    }
+  }
+  return { roots, byId, childrenOf };
+}
+
+function getDescendantIds(id, childrenOf) {
+  const ids = new Set();
+  const visit = (cid) => {
+    ids.add(cid);
+    for (const child of (childrenOf.get(cid) || [])) visit(child.id);
+  };
+  visit(id);
+  return ids;
+}
+
+// SVG icons
+const ICON_DOC  = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H4z"/><path d="M4.5 5h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h5a.5.5 0 0 0 0-1h-5a.5.5 0 0 0 0 1z"/></svg>`;
+const ICON_PLUS = `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/></svg>`;
+const ICON_MOVE = `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M7.646.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 1.707V5.5a.5.5 0 0 1-1 0V1.707L6.354 2.854a.5.5 0 1 1-.708-.708l2-2zm-2 13.708a.5.5 0 0 1 .708-.708L7.5 14.293V10.5a.5.5 0 0 1 1 0v3.793l1.646-1.647a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2z"/></svg>`;
+
+function renderSidebarNode(doc, childrenOf, depth) {
+  const children = childrenOf.get(doc.id) || [];
+  const hasChildren = children.length > 0;
+  const isExpanded = _sidebarExpanded.has(doc.id);
+  const isActive = doc.id === currentDocId;
+  const title = (doc.title || 'Untitled').replace(/\.md$/i, '');
+  const indent = depth * 14; // px per level
+
+  const chevron = hasChildren
+    ? `<button class="sb-chevron${isExpanded ? ' expanded' : ''}" data-id="${doc.id}" tabindex="-1" title="Expand/collapse">
+        <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor"><path d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/></svg>
+      </button>`
+    : `<span class="sb-chevron-placeholder"></span>`;
+
+  const childrenHtml = hasChildren
+    ? `<div class="sb-children${isExpanded ? '' : ' sb-hidden'}" data-parent="${doc.id}">${
+        children.map(c => renderSidebarNode(c, childrenOf, depth + 1)).join('')
+      }</div>`
+    : '';
+
+  return `<div class="sb-node" data-node="${doc.id}">
+    <div class="sidebar-item${isActive ? ' active' : ''}" data-id="${doc.id}" style="padding-left:${8 + indent}px" title="${esc(doc.title || '')}">
+      ${chevron}
+      <span class="sb-icon">${ICON_DOC}</span>
+      <span class="sidebar-item-title">${esc(title)}</span>
+      <span class="sb-actions">
+        <button class="sb-action-btn sb-add-child" data-id="${doc.id}" title="Add sub-page">${ICON_PLUS}</button>
+        <button class="sb-action-btn sb-move" data-id="${doc.id}" title="Move page">${ICON_MOVE}</button>
+      </span>
+    </div>
+    ${childrenHtml}
+  </div>`;
+}
+
+function renderSidebarTree(docs, filter) {
+  const list = document.getElementById('sidebar-list');
+  if (!list) return;
+
+  const q = (filter || '').toLowerCase().trim();
+
+  // When filtering, show a flat list of matches (easier to scan)
+  if (q) {
+    const filtered = docs.filter(d =>
+      (d.title || '').toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q)
+    );
+    if (!filtered.length) {
+      list.innerHTML = `<div class="sidebar-empty">No results</div>`;
+      return;
+    }
+    list.innerHTML = filtered.map(d => {
+      const title = (d.title || 'Untitled').replace(/\.md$/i, '');
+      const isActive = d.id === currentDocId;
+      return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${d.id}" style="padding-left:8px" title="${esc(d.title || '')}">
+        <span class="sb-chevron-placeholder"></span>
+        <span class="sb-icon">${ICON_DOC}</span>
+        <span class="sidebar-item-title">${esc(title)}</span>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.sidebar-item').forEach(el => {
+      el.addEventListener('click', () => loadDoc(el.dataset.id));
+    });
+    return;
+  }
+
+  const { roots, childrenOf } = buildDocTree(docs);
+  if (!roots.length && !docs.length) {
+    list.innerHTML = `<div class="sidebar-empty">No documents yet</div>`;
+    return;
+  }
+
+  list.innerHTML = roots.map(d => renderSidebarNode(d, childrenOf, 0)).join('');
+
+  // Wire up clicks
+  list.querySelectorAll('.sidebar-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      // Don't open doc if a button inside was clicked
+      if (e.target.closest('.sb-action-btn, .sb-chevron')) return;
+      loadDoc(el.dataset.id);
+    });
+  });
+
+  list.querySelectorAll('.sb-chevron').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.id;
+      if (_sidebarExpanded.has(id)) {
+        _sidebarExpanded.delete(id);
+      } else {
+        _sidebarExpanded.add(id);
+      }
+      _saveExpandedState();
+      renderSidebarTree(_sidebarDocs, _sidebarFilter);
+    });
+  });
+
+  list.querySelectorAll('.sb-add-child').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      addSubPage(btn.dataset.id);
+    });
+  });
+
+  list.querySelectorAll('.sb-move').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openMoveModal(btn.dataset.id);
+    });
+  });
+}
+
+// Alias used by legacy callers that pass docs+filter
+function renderSidebarList(docs, filter) {
+  renderSidebarTree(docs, filter);
+}
+
+function updateSidebarActive() {
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === currentDocId);
+  });
+}
+
+async function refreshSidebarList() {
+  if (!auth.currentUser) return;
+  try {
+    _sidebarDocs = await fsGetAll(300);
+    renderSidebarTree(_sidebarDocs, _sidebarFilter);
+  } catch (err) {
+    console.warn('sidebar refresh failed:', err);
+  }
+}
+
+// Add a new sub-page under parentId
+async function addSubPage(parentId) {
+  if (isDirty && !confirm('You have unsaved changes. Create a sub-page anyway?')) return;
+  const parentDoc = _sidebarDocs.find(d => d.id === parentId);
+  const parentTitle = parentDoc ? (parentDoc.title || 'Untitled').replace(/\.md$/i, '') : 'parent';
+
+  clearTimeout(autoSaveTimer);
+  const newId = crypto.randomUUID();
+  currentDocId = newId;
+  currentDocIsNew = true;
+  currentParentId = parentId;
+  isDirty = false;
+  editor.value = '';
+  setTitle('New Document');
+  renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+  document.getElementById('drive-delete-btn').style.display = 'inline-flex';
+
+  // Expand the parent in sidebar
+  _sidebarExpanded.add(parentId);
+  _saveExpandedState();
+  updateSidebarActive();
+  if (window.innerWidth <= 600) closeSidebar();
+  editor.focus();
+}
+
+// Move page modal
+let _moveTargetId = null;
+
+function openMoveModal(docId) {
+  _moveTargetId = docId;
+  const modal = document.getElementById('move-modal');
+  const list  = document.getElementById('move-modal-list');
+  if (!modal || !list) return;
+
+  const { childrenOf } = buildDocTree(_sidebarDocs);
+  const excluded = getDescendantIds(docId, childrenOf); // self + descendants
+  const movingDoc = _sidebarDocs.find(d => d.id === docId);
+  const movingTitle = movingDoc ? (movingDoc.title || 'Untitled').replace(/\.md$/i, '') : 'this page';
+
+  document.getElementById('move-modal-title').textContent = `Move "${movingTitle}" to…`;
+
+  const candidates = _sidebarDocs.filter(d => !excluded.has(d.id));
+  list.innerHTML = `
+    <div class="move-option${!movingDoc?.parentId ? ' move-option-current' : ''}" data-pid="">
+      <span class="move-option-icon">⬛</span> Root level
+    </div>
+    ${candidates.map(d => {
+      const isCurrent = d.id === movingDoc?.parentId;
+      const title = (d.title || 'Untitled').replace(/\.md$/i, '');
+      return `<div class="move-option${isCurrent ? ' move-option-current' : ''}" data-pid="${d.id}">
+        <span class="move-option-icon">${ICON_DOC}</span> ${esc(title)}
+      </div>`;
+    }).join('')}`;
+
+  list.querySelectorAll('.move-option').forEach(el => {
+    el.addEventListener('click', () => {
+      list.querySelectorAll('.move-option').forEach(x => x.classList.remove('move-option-selected'));
+      el.classList.add('move-option-selected');
+    });
+  });
+
+  modal.classList.add('open');
+}
+
+function closeMoveModal() {
+  document.getElementById('move-modal')?.classList.remove('open');
+  _moveTargetId = null;
+}
+
+async function confirmMove() {
+  if (!_moveTargetId) return;
+  const selected = document.querySelector('#move-modal-list .move-option-selected');
+  if (!selected) { showToast('Select a destination first'); return; }
+  const newParentId = selected.dataset.pid || null;
+
+  try {
+    await fsUpdateParent(_moveTargetId, newParentId);
+    // Update local cache
+    const doc = _sidebarDocs.find(d => d.id === _moveTargetId);
+    if (doc) doc.parentId = newParentId || null;
+    if (newParentId) _sidebarExpanded.add(newParentId);
+    _saveExpandedState();
+    // Update currentParentId if moving the open doc
+    if (_moveTargetId === currentDocId) currentParentId = newParentId || null;
+    renderSidebarTree(_sidebarDocs, _sidebarFilter);
+    closeMoveModal();
+    showToast('Page moved');
+  } catch (err) {
+    console.error('move failed:', err);
+    showToast('Move failed');
+  }
+}
+
+function initSidebar() {
+  // Restore collapsed state
+  const savedState = localStorage.getItem('sidebar-state');
+  const shell = document.getElementById('app-shell');
+  if (!shell) return;
+
+  // Default: open on desktop, closed on mobile
+  if (savedState === 'closed' || (window.innerWidth <= 600 && savedState !== 'open')) {
+    shell.classList.add('sidebar-collapsed');
+  }
+
+  // Toggle button in header bar
+  const toggleBtn = document.getElementById('sidebar-toggle-btn');
+  if (toggleBtn) toggleBtn.addEventListener('click', toggleSidebar);
+
+  // Collapse button inside sidebar
+  const collapseBtn = document.getElementById('sidebar-collapse-btn');
+  if (collapseBtn) collapseBtn.addEventListener('click', closeSidebar);
+
+  // Backdrop (mobile)
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (backdrop) backdrop.addEventListener('click', closeSidebar);
+
+  // Search
+  const searchInput = document.getElementById('sidebar-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      _sidebarFilter = searchInput.value;
+      renderSidebarTree(_sidebarDocs, _sidebarFilter);
+    });
+  }
+
+  // New doc button (root-level)
+  const newBtn = document.getElementById('sidebar-new-btn');
+  if (newBtn) {
+    newBtn.addEventListener('click', () => {
+      if (isDirty && !confirm('You have unsaved changes. Create a new document anyway?')) return;
+      clearTimeout(autoSaveTimer);
+      currentDocIsNew = true;
+      currentDocId = null;
+      currentParentId = null;
+      isDirty = false;
+      editor.value = '';
+      setTitle('New Document');
+      renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+      updateSidebarActive();
+      editor.focus();
+      if (window.innerWidth <= 600) closeSidebar();
+    });
+  }
+
+  // Browse all button
+  const browseBtn = document.getElementById('sidebar-browse-all-btn');
+  if (browseBtn) browseBtn.addEventListener('click', openDocBrowser);
+
+  // Move modal buttons
+  document.getElementById('move-modal-cancel')?.addEventListener('click', closeMoveModal);
+  document.getElementById('move-modal-ok')?.addEventListener('click', confirmMove);
+
+  // Keyboard shortcut: Ctrl+\ to toggle sidebar
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
+      e.preventDefault();
+      toggleSidebar();
+    }
+  });
+
+  // Initial doc list load (stale-while-revalidate)
+  const serverFetch = fsGetAll(300);
+  fsGetAll(300, { source: 'cache' }).then(docs => {
+    _sidebarDocs = docs;
+    renderSidebarTree(docs, _sidebarFilter);
+  }).catch(() => {});
+  serverFetch.then(docs => {
+    _sidebarDocs = docs;
+    renderSidebarTree(docs, _sidebarFilter);
+  }).catch(err => console.warn('sidebar initial load failed:', err));
+}
 
 function isSidebarCollapsed() {
   const shell = document.getElementById('app-shell');
@@ -2142,136 +2493,6 @@ function closeSidebar() {
 }
 
 function toggleSidebar() {
-  if (isSidebarCollapsed()) {
-    openSidebar();
-  } else {
-    closeSidebar();
-  }
-}
-
-function renderSidebarList(docs, filter) {
-  const list = document.getElementById('sidebar-list');
-  if (!list) return;
-
-  const q = (filter || '').toLowerCase().trim();
-  const filtered = q
-    ? docs.filter(d => (d.title || '').toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q))
-    : docs;
-
-  if (!filtered.length) {
-    list.innerHTML = `<div class="sidebar-empty">${q ? 'No results' : 'No documents yet'}</div>`;
-    return;
-  }
-
-  list.innerHTML = filtered.map(d => {
-    const title = (d.title || 'Untitled').replace(/\.md$/i, '');
-    const isActive = d.id === currentDocId;
-    return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${d.id}" title="${esc(d.title || '')}">
-      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H4z"/><path d="M4.5 5h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h5a.5.5 0 0 0 0-1h-5a.5.5 0 0 0 0 1z"/></svg>
-      <span class="sidebar-item-title">${esc(title)}</span>
-    </div>`;
-  }).join('');
-
-  list.querySelectorAll('.sidebar-item').forEach(el => {
-    el.addEventListener('click', () => loadDoc(el.dataset.id));
-  });
-}
-
-function updateSidebarActive() {
-  document.querySelectorAll('.sidebar-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.id === currentDocId);
-  });
-}
-
-async function refreshSidebarList() {
-  if (!auth.currentUser) return;
-  try {
-    _sidebarDocs = await fsGetAll(300);
-    renderSidebarList(_sidebarDocs, _sidebarFilter);
-  } catch (err) {
-    console.warn('sidebar refresh failed:', err);
-  }
-}
-
-function initSidebar() {
-  // Restore collapsed state
-  const savedState = localStorage.getItem('sidebar-state');
-  const shell = document.getElementById('app-shell');
-  if (!shell) return;
-
-  // Default: open on desktop, closed on mobile
-  if (savedState === 'closed' || (window.innerWidth <= 600 && savedState !== 'open')) {
-    shell.classList.add('sidebar-collapsed');
-  }
-
-  // Toggle button in header bar
-  const toggleBtn = document.getElementById('sidebar-toggle-btn');
-  if (toggleBtn) {
-    toggleBtn.addEventListener('click', toggleSidebar);
-  }
-
-  // Collapse button inside sidebar
-  const collapseBtn = document.getElementById('sidebar-collapse-btn');
-  if (collapseBtn) {
-    collapseBtn.addEventListener('click', closeSidebar);
-  }
-
-  // Backdrop (mobile)
-  const backdrop = document.getElementById('sidebar-backdrop');
-  if (backdrop) {
-    backdrop.addEventListener('click', closeSidebar);
-  }
-
-  // Search
-  const searchInput = document.getElementById('sidebar-search');
-  if (searchInput) {
-    searchInput.addEventListener('input', () => {
-      _sidebarFilter = searchInput.value;
-      renderSidebarList(_sidebarDocs, _sidebarFilter);
-    });
-  }
-
-  // New doc button
-  const newBtn = document.getElementById('sidebar-new-btn');
-  if (newBtn) {
-    newBtn.addEventListener('click', () => {
-      if (isDirty && !confirm('You have unsaved changes. Create a new document anyway?')) return;
-      clearTimeout(autoSaveTimer);
-      currentDocIsNew = true;
-      currentDocId = null;
-      isDirty = false;
-      editor.value = '';
-      setTitle('New Document');
-      renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
-      updateSidebarActive();
-      editor.focus();
-      // On mobile, close sidebar after creating new doc
-      if (window.innerWidth <= 600) closeSidebar();
-    });
-  }
-
-  // Browse all button
-  const browseBtn = document.getElementById('sidebar-browse-all-btn');
-  if (browseBtn) {
-    browseBtn.addEventListener('click', openDocBrowser);
-  }
-
-  // Keyboard shortcut: Ctrl+\ to toggle sidebar
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
-      e.preventDefault();
-      toggleSidebar();
-    }
-  });
-
-  // Initial doc list load (stale-while-revalidate)
-  const serverFetch = fsGetAll(300);
-  fsGetAll(300, { source: 'cache' }).then(docs => {
-    _sidebarDocs = docs;
-    renderSidebarList(docs, _sidebarFilter);
-  }).catch(() => {});
-  serverFetch.then(docs => {
-    _sidebarDocs = docs;
-    renderSidebarList(docs, _sidebarFilter);
-  }).catch(err => console.warn('sidebar initial load failed:', err));
+  if (isSidebarCollapsed()) openSidebar();
+  else closeSidebar();
 }
