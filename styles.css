@@ -618,7 +618,8 @@ body.theme-light #sidebar {
 .sb-node {
   position: relative;
 }
-.sb-node-row {
+.sb-node-row,
+.sb-node .sidebar-item {
   display: flex;
   align-items: center;
   gap: 0;
@@ -627,7 +628,8 @@ body.theme-light #sidebar {
   transition: background 0.12s;
   min-height: 30px;
 }
-.sb-node-row:hover {
+.sb-node-row:hover,
+.sb-node .sidebar-item:hover {
   background: var(--bg3);
 }
 .sb-chevron {
@@ -680,7 +682,8 @@ body.theme-light #sidebar {
   gap: 1px;
   padding-right: 4px;
 }
-.sb-node-row:hover .sb-actions {
+.sb-node-row:hover .sb-actions,
+.sb-node .sidebar-item:hover .sb-actions {
   display: flex;
 }
 .sb-action-btn {
@@ -734,7 +737,8 @@ body.theme-light #sidebar {
 }
 
 /* Dark theme overrides for tree and move modal */
-body.theme-dark .sb-node-row:hover { background: #2a2a2a; }
+body.theme-dark .sb-node-row:hover,
+body.theme-dark .sb-node .sidebar-item:hover { background: #2a2a2a; }
 body.theme-dark .sb-chevron { color: #666; }
 body.theme-dark .sb-chevron:hover { background: #333; color: #ccc; }
 body.theme-dark .sb-icon { color: #666; }
