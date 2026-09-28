@@ -633,6 +633,10 @@ body.theme-light #sidebar {
   background: var(--bg3);
 }
 .sb-chevron {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
   flex-shrink: 0;
   width: 16px;
   height: 16px;
@@ -700,6 +704,7 @@ body.theme-light #sidebar {
   padding: 0;
   transition: background 0.12s, color 0.12s;
 }
+.sidebar-item .sb-action-btn svg { opacity: .8; }
 .sb-action-btn:hover {
   background: var(--accent);
   color: #fff;
@@ -1082,7 +1087,6 @@ body.focus-mode #focus-overlay { display: block; }
 
 #focus-wysiwyg {
   width: 75%;
-  max-width: 900px;
   margin: 0 auto;
   padding: 0 32px;
   font-size: 18px;
@@ -1333,6 +1337,9 @@ body.theme-light .btn-secondary { background: #efefef; }
 @media (max-width: 768px) {
   /* Show editor/preview toggle button on mobile */
   #editor-preview-toggle { display: inline-flex !important; }
+
+  /* Focus mode: use the full width on phones, 75% is too cramped there */
+  #focus-wysiwyg { width: 100%; padding: 0 20px; }
 
   /* Focus mode exit button: make it larger and more prominent on mobile */
   #focus-exit-btn {
