@@ -122,9 +122,42 @@
      saves it to local storage. -->
 <input type="file" id="import-file-input" accept=".md,.markdown,.txt" multiple style="display:none"/>
 
+<!-- App shell: sidebar + main app column -->
+<div id="app-shell">
+
+  <!-- Left sidebar (Notion/Anytype-style document nav) -->
+  <div id="sidebar">
+    <div id="sidebar-inner">
+      <div id="sidebar-header">
+        <span id="sidebar-title">EM-DASH MD</span>
+        <button class="hdr-btn" id="sidebar-collapse-btn" title="Collapse sidebar">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h8.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25Zm1.75-.25a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25H6V2.5Zm3.75 0v11h4.75a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z"/></svg>
+        </button>
+      </div>
+      <div id="sidebar-search-wrap">
+        <input type="text" id="sidebar-search" placeholder="Search documents…" autocomplete="off" spellcheck="false"/>
+      </div>
+      <button id="sidebar-new-btn" title="New Document (Ctrl+N)">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.75.75 0 0 1 .75.75v4.5h4.5a.75.75 0 0 1 0 1.5h-4.5v4.5a.75.75 0 0 1-1.5 0v-4.5h-4.5a.75.75 0 0 1 0-1.5h4.5v-4.5A.75.75 0 0 1 8 2Z"/></svg>
+        New document
+      </button>
+      <div id="sidebar-list"></div>
+      <div id="sidebar-footer">
+        <button id="sidebar-browse-all-btn">Browse all documents…</button>
+      </div>
+    </div>
+  </div>
+  <div id="sidebar-backdrop"></div>
+
+  <!-- Main app column -->
+  <div id="app-content">
+
 <!-- Header bar -->
 <div id="header-bar">
   <div class="hdr-left">
+    <button class="hdr-btn" id="sidebar-toggle-btn" title="Toggle sidebar (Ctrl+\)">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h8.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25Zm1.75-.25a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25H6V2.5Zm3.75 0v11h4.75a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z"/></svg>
+    </button>
     <button class="hdr-btn" id="open-btn" title="Open document (Ctrl+O)">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5L6.124 1.309A.75.75 0 0 0 5.5 1Z"/></svg>
     </button>
@@ -310,13 +343,16 @@
 
 <!-- Status bar -->
 <div id="statusbar">
-  <span id="app-version">v3.21.1</span>
+  <span id="app-version">v3.22.0</span>
   <span id="word-count" title="Click to set a word goal">Words: 0</span>
   <span id="char-count">Chars: 0</span>
   <span id="cursor-pos">Ln 1, Col 1</span>
   <span style="flex:1"></span>
   <span id="save-status"></span>
 </div>
+
+  </div><!-- /#app-content -->
+</div><!-- /#app-shell -->
 
 <!-- New file modal -->
 <div id="new-modal" class="modal-backdrop">

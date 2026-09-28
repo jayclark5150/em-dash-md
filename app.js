@@ -660,6 +660,7 @@ async function performSave(silent = false) {
     currentDocIsNew = false;
     isDirty = false;
     showSaveStatus('Saved');
+    refreshSidebarList();
   } catch (err) {
     console.error('Save failed:', err);
     showSaveStatus('Save failed');
@@ -704,6 +705,7 @@ function createNewDoc() {
   renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
   document.getElementById('drive-delete-btn').style.display = 'none';
   closeNewModal();
+  updateSidebarActive();
   editor.focus();
 }
 
@@ -924,6 +926,9 @@ function applyDoc(doc) {
   renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
   document.getElementById('drive-delete-btn').style.display = 'inline-flex';
   closeDocBrowser();
+  updateSidebarActive();
+  // On mobile, close sidebar after opening a doc
+  if (window.innerWidth <= 600) closeSidebar();
   editor.focus();
 }
 
@@ -1018,8 +1023,18 @@ async function deleteCurrentDoc() {
     }
   });
 
+  // Optimistically remove from sidebar immediately; restore on undo
+  _sidebarDocs = _sidebarDocs.filter(d => d.id !== deletedId);
+  renderSidebarList(_sidebarDocs, _sidebarFilter);
+  updateSidebarActive();
+
   setTimeout(async () => {
-    if (undone) return;
+    if (undone) {
+      // Undo fired — re-add to sidebar
+      refreshSidebarList();
+      updateSidebarActive();
+      return;
+    }
     try {
       await fsDelete(deletedId);
     } catch (err) {
@@ -2031,6 +2046,7 @@ async function bootApp() {
   }
 
   initializeMobileUI();
+  initSidebar();
 }
 
 // ── Mobile UI Improvements ────────────────────────────────────────────────────
@@ -2091,4 +2107,171 @@ function handleKeyboardVisibility() {
   } else {
     document.body.classList.remove('keyboard-visible');
   }
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────────────
+let _sidebarDocs = [];        // cached doc list for the sidebar
+let _sidebarFilter = '';      // current search filter text
+
+function isSidebarCollapsed() {
+  const shell = document.getElementById('app-shell');
+  return shell ? shell.classList.contains('sidebar-collapsed') : false;
+}
+
+function openSidebar() {
+  const shell = document.getElementById('app-shell');
+  if (!shell) return;
+  if (window.innerWidth <= 600) {
+    shell.classList.add('sidebar-open');
+    shell.classList.remove('sidebar-collapsed');
+  } else {
+    shell.classList.remove('sidebar-collapsed');
+  }
+  localStorage.setItem('sidebar-state', 'open');
+}
+
+function closeSidebar() {
+  const shell = document.getElementById('app-shell');
+  if (!shell) return;
+  if (window.innerWidth <= 600) {
+    shell.classList.remove('sidebar-open');
+  } else {
+    shell.classList.add('sidebar-collapsed');
+  }
+  localStorage.setItem('sidebar-state', 'closed');
+}
+
+function toggleSidebar() {
+  if (isSidebarCollapsed()) {
+    openSidebar();
+  } else {
+    closeSidebar();
+  }
+}
+
+function renderSidebarList(docs, filter) {
+  const list = document.getElementById('sidebar-list');
+  if (!list) return;
+
+  const q = (filter || '').toLowerCase().trim();
+  const filtered = q
+    ? docs.filter(d => (d.title || '').toLowerCase().includes(q) || (d.content || '').toLowerCase().includes(q))
+    : docs;
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="sidebar-empty">${q ? 'No results' : 'No documents yet'}</div>`;
+    return;
+  }
+
+  list.innerHTML = filtered.map(d => {
+    const title = (d.title || 'Untitled').replace(/\.md$/i, '');
+    const isActive = d.id === currentDocId;
+    return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${d.id}" title="${esc(d.title || '')}">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H4z"/><path d="M4.5 5h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h5a.5.5 0 0 0 0-1h-5a.5.5 0 0 0 0 1z"/></svg>
+      <span class="sidebar-item-title">${esc(title)}</span>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.sidebar-item').forEach(el => {
+    el.addEventListener('click', () => loadDoc(el.dataset.id));
+  });
+}
+
+function updateSidebarActive() {
+  document.querySelectorAll('.sidebar-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === currentDocId);
+  });
+}
+
+async function refreshSidebarList() {
+  if (!auth.currentUser) return;
+  try {
+    _sidebarDocs = await fsGetAll(300);
+    renderSidebarList(_sidebarDocs, _sidebarFilter);
+  } catch (err) {
+    console.warn('sidebar refresh failed:', err);
+  }
+}
+
+function initSidebar() {
+  // Restore collapsed state
+  const savedState = localStorage.getItem('sidebar-state');
+  const shell = document.getElementById('app-shell');
+  if (!shell) return;
+
+  // Default: open on desktop, closed on mobile
+  if (savedState === 'closed' || (window.innerWidth <= 600 && savedState !== 'open')) {
+    shell.classList.add('sidebar-collapsed');
+  }
+
+  // Toggle button in header bar
+  const toggleBtn = document.getElementById('sidebar-toggle-btn');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', toggleSidebar);
+  }
+
+  // Collapse button inside sidebar
+  const collapseBtn = document.getElementById('sidebar-collapse-btn');
+  if (collapseBtn) {
+    collapseBtn.addEventListener('click', closeSidebar);
+  }
+
+  // Backdrop (mobile)
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (backdrop) {
+    backdrop.addEventListener('click', closeSidebar);
+  }
+
+  // Search
+  const searchInput = document.getElementById('sidebar-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      _sidebarFilter = searchInput.value;
+      renderSidebarList(_sidebarDocs, _sidebarFilter);
+    });
+  }
+
+  // New doc button
+  const newBtn = document.getElementById('sidebar-new-btn');
+  if (newBtn) {
+    newBtn.addEventListener('click', () => {
+      if (isDirty && !confirm('You have unsaved changes. Create a new document anyway?')) return;
+      clearTimeout(autoSaveTimer);
+      currentDocIsNew = true;
+      currentDocId = null;
+      isDirty = false;
+      editor.value = '';
+      setTitle('New Document');
+      renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+      updateSidebarActive();
+      editor.focus();
+      // On mobile, close sidebar after creating new doc
+      if (window.innerWidth <= 600) closeSidebar();
+    });
+  }
+
+  // Browse all button
+  const browseBtn = document.getElementById('sidebar-browse-all-btn');
+  if (browseBtn) {
+    browseBtn.addEventListener('click', openDocBrowser);
+  }
+
+  // Keyboard shortcut: Ctrl+\ to toggle sidebar
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === '\\') {
+      e.preventDefault();
+      toggleSidebar();
+    }
+  });
+
+  // Initial doc list load (stale-while-revalidate)
+  const serverFetch = fsGetAll(300);
+  fsGetAll(300, { source: 'cache' }).then(docs => {
+    _sidebarDocs = docs;
+    renderSidebarList(docs, _sidebarFilter);
+  }).catch(() => {});
+  serverFetch.then(docs => {
+    _sidebarDocs = docs;
+    renderSidebarList(docs, _sidebarFilter);
+  }).catch(err => console.warn('sidebar initial load failed:', err));
 }

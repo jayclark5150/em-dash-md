@@ -364,3 +364,35 @@ through in a live browser.
 - [ ] All tap targets ≥44px on mobile
 - [ ] No console errors on mobile browsers (Chrome DevTools device emulation)
 
+
+---
+
+## v3.22.0 — Left sidebar navigation
+
+**Purpose**: Add persistent left-side document navigation sidebar (Anytype/Notion-style).
+
+**Changes**:
+- `index.html`: added `#app-shell` (flex-row wrapper), `#sidebar` with inner sections, `#sidebar-backdrop` (mobile overlay), `#app-content` column wrapper, `#sidebar-toggle-btn` in header
+- `styles.css`: full sidebar CSS for all three themes (Lokai/dark/light) and mobile responsive layout
+- `app.js`: `initSidebar()`, `renderSidebarList()`, `updateSidebarActive()`, `refreshSidebarList()`, open/close/toggle logic, `Ctrl+\` shortcut, wired into `bootApp()`, `applyDoc()`, `performSave()`, `deleteCurrentDoc()`, `createNewDoc()`
+- `sw.js`: cache bumped from v7 to v8
+
+**Regression gate**: none (UI-only change, no Firestore writes).
+
+**Checks added**
+- [ ] Sidebar renders on first load with document list populated
+- [ ] Active document is highlighted in sidebar on load and after switching docs
+- [ ] Sidebar toggle button (header) opens/closes sidebar; state persists in localStorage across reload
+- [ ] `Ctrl+\` (Cmd+\ on Mac) toggles sidebar
+- [ ] Collapse button inside sidebar closes it
+- [ ] Search input filters document list in real-time
+- [ ] "New document" button in sidebar creates new doc correctly
+- [ ] "Browse all documents" button opens the existing doc-browser modal
+- [ ] Clicking a sidebar item opens that document
+- [ ] After saving a doc, sidebar list refreshes and shows updated title
+- [ ] After deleting a doc, it disappears from sidebar immediately; undo restores it
+- [ ] All three themes (Lokai, dark, light) render sidebar correctly
+- [ ] Mobile (<600px): sidebar starts closed; toggle opens it as overlay with backdrop; tapping backdrop closes it; opening a doc closes sidebar
+- [ ] Desktop (>600px): sidebar collapses inline (pushes content right); no overlay
+- [ ] No layout regression: header, editor, preview, statusbar, focus mode all unaffected
+- [ ] No console errors on load
