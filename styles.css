@@ -304,6 +304,12 @@ body {
 }
 .fmt-dd-item:hover { background: #f2f2f2; color: #111111; }
 
+.fmt-table-picker-wrap { padding: 8px; min-width: unset; }
+.fmt-table-grid { display: grid; grid-template-columns: repeat(5, 18px); gap: 3px; }
+.fmt-table-cell { width: 18px; height: 18px; border: 1px solid var(--border); border-radius: 2px; cursor: pointer; transition: background .08s, border-color .08s; }
+.fmt-table-cell.active { background: rgba(95,111,46,.2); border-color: var(--accent); }
+.fmt-table-label { font-size: 11px; color: var(--text2); text-align: center; margin-top: 6px; }
+
 /* View toggle group */
 .fmt-view-group {
   display: flex; align-items: center;
@@ -538,6 +544,29 @@ body {
   transition: background 120ms, color 120ms;
 }
 #sidebar-browse-all-btn:hover { background: var(--bg3); color: var(--text); }
+#sidebar-trash-btn {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--font);
+  color: var(--text2);
+  cursor: pointer;
+  text-align: left;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 120ms, color 120ms;
+}
+#sidebar-trash-btn:hover { background: var(--bg3); color: var(--text); }
+
+.trash-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+.trash-item:last-child { border-bottom: none; }
+.trash-item-name { flex: 1; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trash-item-date { font-size: 11px; color: var(--text2); white-space: nowrap; }
+.trash-item-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
 /* Mobile backdrop */
 #sidebar-backdrop {
@@ -577,6 +606,8 @@ body.theme-dark .sidebar-item.active { background: color-mix(in srgb, var(--acce
 body.theme-dark #sidebar-footer { border-top-color: #2a2a2a; }
 body.theme-dark #sidebar-browse-all-btn { color: #888; }
 body.theme-dark #sidebar-browse-all-btn:hover { background: #222; color: #e0e0e0; }
+body.theme-dark #sidebar-trash-btn { color: #888; }
+body.theme-dark #sidebar-trash-btn:hover { background: #222; color: #e0e0e0; }
 body.theme-dark #sidebar-header { border-bottom-color: #2a2a2a; }
 body.theme-dark #sidebar-new-btn { border-color: #2a2a2a; color: #888; }
 body.theme-dark #sidebar-new-btn:hover { background: #222; color: #e0e0e0; }
@@ -868,6 +899,12 @@ body.theme-light .sb-action-btn { color: #999; }
 #preview-pane pre { background: #f5f5f5; border: 1px solid var(--border); border-radius: 8px; padding: 16px; overflow-x: auto; margin-bottom: 1em; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
 #preview-pane pre code { background: none; color: inherit; padding: 0; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: break-word; }
 
+/* Mermaid diagrams */
+.mermaid-diagram { text-align: center; margin: 1em 0; overflow-x: auto; }
+.mermaid-diagram svg { max-width: 100%; height: auto; }
+.mermaid-pending { display: none; }
+.mermaid-error { background: #fff0f0; border: 1px solid #f5c2c2; border-radius: 8px; padding: 12px 16px; color: var(--red); font-size: 13px; margin: 1em 0; white-space: pre-wrap; font-family: monospace; }
+
 /* Copy button on fenced code blocks */
 .code-block { position: relative; }
 .copy-code-btn {
@@ -1036,7 +1073,10 @@ body.theme-light .sb-action-btn { color: #999; }
 .file-item:hover { background: var(--bg3); }
 .file-item.selected { background: rgba(95,111,46,.1); }
 .file-type-badge { flex-shrink: 0; width: 20px; height: 20px; background: var(--accent); color: #fff; border-radius: 5px; font-size: 7px; font-weight: 700; letter-spacing: .05em; display: flex; align-items: center; justify-content: center; }
-.file-col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.file-col-name { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.file-name-row { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.file-snippet { font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; margin-top: 1px; }
+.file-snippet mark { background: rgba(255,220,0,.25); color: inherit; border-radius: 2px; padding: 0 1px; }
 .file-name { flex-shrink: 1; min-width: 40px; color: var(--text); font-weight: 500; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-col-tags { width: 160px; flex-shrink: 0; overflow: hidden; }
 .file-tags-wrap { display: flex; align-items: center; gap: 4px; overflow: hidden; }

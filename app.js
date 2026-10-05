@@ -30,7 +30,7 @@ async function fsGetAll(max, opts) {
     .orderBy('updatedAt', 'desc');
   if (max) q = q.limit(max);
   const snap = await q.get(opts && opts.source ? { source: opts.source } : undefined);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => !d.isDeleted);
 }
 
 async function fsGet(id) {
@@ -58,6 +58,30 @@ async function fsUpdateParent(id, parentId) {
 
 async function fsDelete(id) {
   await db.collection('documents').doc(id).delete();
+}
+
+async function fsTrashDoc(id) {
+  const now = firebase.firestore.FieldValue.serverTimestamp();
+  await db.collection('documents').doc(id).update({ isDeleted: true, deletedAt: now });
+}
+
+async function fsRestoreDoc(id) {
+  await db.collection('documents').doc(id).update({
+    isDeleted: firebase.firestore.FieldValue.delete(),
+    deletedAt: firebase.firestore.FieldValue.delete(),
+  });
+}
+
+async function fsGetTrashed() {
+  // Reuse the existing composite index (userId + updatedAt); filter client-side.
+  const snap = await db.collection('documents')
+    .where('userId', '==', auth.currentUser.uid)
+    .orderBy('updatedAt', 'desc')
+    .get();
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(d => d.isDeleted)
+    .sort((a, b) => tsToMs(b.deletedAt) - tsToMs(a.deletedAt));
 }
 
 async function fsUpdateTags(id, tags) {
@@ -386,6 +410,10 @@ const titleInput     = document.getElementById('title-input');
 const toast          = document.getElementById('toast');
 
 // ── Marked setup ─────────────────────────────────────────────────────────────
+if (window.mermaid) {
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'neutral' });
+}
+
 if (window.marked && window.hljs) {
   marked.use({
     renderer: {
@@ -400,6 +428,9 @@ if (window.marked && window.hljs) {
         }
         text = (text == null) ? '' : String(text);
         if (lang) lang = lang.trim().split(/\s+/)[0];
+        if (lang === 'mermaid') {
+          return `<div class="mermaid-pending">${esc(text)}</div>`;
+        }
         const language = (lang && hljs.getLanguage(lang)) ? lang : 'plaintext';
         const highlighted = hljs.highlight(text, { language }).value;
         return `<pre><code class="hljs language-${language}">${highlighted}</code></pre>`;
@@ -424,8 +455,29 @@ function renderPreview() {
     try {
       previewInner.innerHTML = DOMPurify.sanitize(marked.parse(editor.value || ''));
       addCodeCopyButtons();
+      renderMermaidDiagrams();
     } catch (e) {
       console.error('Preview render failed:', e);
+    }
+  }
+}
+
+let _mermaidCounter = 0;
+async function renderMermaidDiagrams() {
+  if (!window.mermaid) return;
+  const blocks = previewInner.querySelectorAll('.mermaid-pending');
+  for (const block of blocks) {
+    const src = block.textContent;
+    const id  = 'mmd-' + (++_mermaidCounter);
+    try {
+      const { svg } = await mermaid.render(id, src);
+      const wrap = document.createElement('div');
+      wrap.className = 'mermaid-diagram';
+      wrap.innerHTML = svg;
+      block.replaceWith(wrap);
+    } catch (e) {
+      block.className = 'mermaid-error';
+      block.textContent = 'Diagram error: ' + (e.message || e);
     }
   }
 }
@@ -780,6 +832,21 @@ function updateDocBrowserSortHeader() {
 
 const EDIT_SVG = '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
 
+// Returns safe HTML snippet (with <mark>) for a query match inside content.
+function getSnippet(content, query) {
+  const lower = content.toLowerCase();
+  const q     = query.toLowerCase();
+  const idx   = lower.indexOf(q);
+  if (idx === -1) return null;
+  const PAD    = 60;
+  const start  = Math.max(0, idx - PAD);
+  const end    = Math.min(content.length, idx + q.length + PAD);
+  const before = content.slice(start, idx).replace(/[\r\n]+/g, ' ');
+  const match  = content.slice(idx, idx + q.length);
+  const after  = content.slice(idx + q.length, end).replace(/[\r\n]+/g, ' ');
+  return (start > 0 ? '…' : '') + esc(before) + '<mark>' + esc(match) + '</mark>' + esc(after) + (end < content.length ? '…' : '');
+}
+
 async function renderDocBrowserList(query, opts) {
   const gen = ++_docBrowserRenderGen;
   const list = document.getElementById('doc-browser-list');
@@ -852,6 +919,8 @@ async function renderDocBrowserList(query, opts) {
 
   const fmtDate = ts => new Date(tsToMs(ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
+  const activeQuery = (query || '').toLowerCase().trim();
+
   list.innerHTML = docs.map(d => {
     const modDate     = fmtDate(d.updatedAt);
     const createdDate = d.createdAt ? fmtDate(d.createdAt) : null;
@@ -862,10 +931,24 @@ async function renderDocBrowserList(query, opts) {
     const tagHtml     = tags.map(t => `<span class="file-tag">${esc(t)}</span>`).join('');
     const modifiedTitle = createdDate && createdDate !== modDate ? ` title="Created ${esc(createdDate)}"` : '';
 
+    // Show a content snippet only when the query matched in body (not title/tag)
+    let snippetHtml = '';
+    if (activeQuery) {
+      const titleHit = (d.title || '').toLowerCase().includes(activeQuery);
+      const tagHit   = tags.some(t => t.toLowerCase().includes(activeQuery));
+      if (!titleHit && !tagHit) {
+        const s = getSnippet(d.content || '', activeQuery);
+        if (s) snippetHtml = `<span class="file-snippet">${s}</span>`;
+      }
+    }
+
     return `<div class="file-item" data-id="${esc(d.id)}" data-tags="${esc(JSON.stringify(tags))}">
       <div class="file-col-name">
-        <div class="file-type-badge">${esc(docType)}</div>
-        <span class="file-name" title="${esc(d.title || 'Untitled')}">${esc(d.title || 'Untitled')}</span>
+        <div class="file-name-row">
+          <div class="file-type-badge">${esc(docType)}</div>
+          <span class="file-name" title="${esc(d.title || 'Untitled')}">${esc(d.title || 'Untitled')}</span>
+        </div>
+        ${snippetHtml}
       </div>
       <div class="file-col-tags">
         <div class="file-tags-wrap">
@@ -1018,7 +1101,7 @@ async function deleteCurrentDoc() {
   document.getElementById('drive-delete-btn').style.display = 'none';
 
   let undone = false;
-  showToast(`"${deletedTitle}" deleted`, 5000, {
+  showToast(`"${deletedTitle}" moved to Trash`, 5000, {
     label: 'Undo',
     fn: () => {
       undone          = true;
@@ -1045,7 +1128,7 @@ async function deleteCurrentDoc() {
       return;
     }
     try {
-      await fsDelete(deletedId);
+      await fsTrashDoc(deletedId);
     } catch (err) {
       showToast('Delete failed');
       console.error('deleteCurrentDoc:', err);
@@ -1118,6 +1201,105 @@ document.getElementById('doc-browser-modal').addEventListener('click', (e) => {
     document.addEventListener('mouseup', onUp);
   });
 }());
+
+// ── Trash ─────────────────────────────────────────────────────────────────────
+async function openTrashModal() {
+  document.getElementById('trash-modal').classList.add('open');
+  await renderTrashList();
+}
+
+function closeTrashModal() {
+  document.getElementById('trash-modal').classList.remove('open');
+}
+
+async function renderTrashList() {
+  const list = document.getElementById('trash-list');
+  list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Loading…</div>';
+  let docs;
+  try {
+    docs = await fsGetTrashed();
+  } catch (err) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Error loading trash</div>';
+    console.error('renderTrashList:', err);
+    return;
+  }
+
+  const countEl = document.getElementById('trash-count');
+  countEl.textContent = `${docs.length} deleted document${docs.length !== 1 ? 's' : ''}`;
+
+  const emptyBtn = document.getElementById('trash-empty-btn');
+  emptyBtn.style.display = docs.length ? 'inline-flex' : 'none';
+
+  if (!docs.length) {
+    list.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text2)">Trash is empty</div>';
+    return;
+  }
+
+  const fmtDate = ts => ts
+    ? new Date(tsToMs(ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+    : '—';
+
+  list.innerHTML = docs.map(d => `
+    <div class="trash-item" data-id="${esc(d.id)}">
+      <span class="trash-item-name" title="${esc(d.title || 'Untitled')}">${esc((d.title || 'Untitled').replace(/\.md$/i, ''))}</span>
+      <span class="trash-item-date">Deleted ${esc(fmtDate(d.deletedAt))}</span>
+      <span class="trash-item-actions">
+        <button class="trash-restore-btn btn btn-secondary" data-id="${esc(d.id)}">Restore</button>
+        <button class="trash-delete-btn btn btn-secondary hdr-danger" data-id="${esc(d.id)}">Delete permanently</button>
+      </span>
+    </div>`).join('');
+
+  list.querySelectorAll('.trash-restore-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await fsRestoreDoc(btn.dataset.id);
+        await refreshSidebarList();
+        await renderTrashList();
+        showToast('Document restored');
+      } catch (err) {
+        showToast('Restore failed');
+        console.error('restore:', err);
+        btn.disabled = false;
+      }
+    });
+  });
+
+  list.querySelectorAll('.trash-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await fsDelete(btn.dataset.id);
+        await renderTrashList();
+      } catch (err) {
+        showToast('Delete failed');
+        console.error('permanent delete:', err);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+document.getElementById('trash-empty-btn').addEventListener('click', async () => {
+  if (!confirm('Permanently delete all items in Trash? This cannot be undone.')) return;
+  const list = document.getElementById('trash-list');
+  list.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text2)">Emptying…</div>';
+  try {
+    const docs = await fsGetTrashed();
+    await Promise.all(docs.map(d => fsDelete(d.id)));
+    await renderTrashList();
+    showToast('Trash emptied');
+  } catch (err) {
+    showToast('Empty trash failed');
+    console.error('emptyTrash:', err);
+    await renderTrashList();
+  }
+});
+
+document.getElementById('trash-cancel').addEventListener('click', closeTrashModal);
+document.getElementById('trash-modal').addEventListener('click', (e) => {
+  if (e.target === document.getElementById('trash-modal')) closeTrashModal();
+});
 
 // ── Kanban ────────────────────────────────────────────────────────────────────
 async function fsUpdateKanbanStatus(id, status) {
@@ -1669,6 +1851,57 @@ document.getElementById('fmt-image-btn').addEventListener('click', () => {
 });
 
 document.getElementById('fmt-heading-btn').addEventListener('click', () => insertHeading(1));
+function insertTable(rows, cols) {
+  const header = '| ' + Array(cols).fill('Column').join(' | ') + ' |';
+  const sep    = '| ' + Array(cols).fill('---').join(' | ') + ' |';
+  const row    = '| ' + Array(cols).fill('     ').join(' | ') + ' |';
+  const table  = '\n' + header + '\n' + sep + '\n' + Array(rows).fill(row).join('\n') + '\n';
+  const pos    = editor.selectionStart;
+  const before = editor.value.slice(0, pos);
+  const prefix = (before.length && !before.endsWith('\n')) ? '\n' : '';
+  document.execCommand('insertText', false, prefix + table);
+  editor.dispatchEvent(new Event('input'));
+  editor.focus();
+}
+
+// Table picker grid (5×5)
+(function () {
+  const COLS = 5, ROWS = 5;
+  const grid  = document.getElementById('fmt-table-grid');
+  const label = document.getElementById('fmt-table-label');
+  for (let r = 1; r <= ROWS; r++) {
+    for (let c = 1; c <= COLS; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'fmt-table-cell';
+      cell.dataset.r = r;
+      cell.dataset.c = c;
+      cell.addEventListener('mouseenter', () => {
+        label.textContent = `${r} × ${c} table`;
+        grid.querySelectorAll('.fmt-table-cell').forEach(el =>
+          el.classList.toggle('active', +el.dataset.r <= r && +el.dataset.c <= c)
+        );
+      });
+      cell.addEventListener('click', () => {
+        insertTable(r, c);
+        document.getElementById('fmt-table-menu').classList.remove('open');
+      });
+      grid.appendChild(cell);
+    }
+  }
+  grid.addEventListener('mouseleave', () => {
+    label.textContent = 'Insert table';
+    grid.querySelectorAll('.fmt-table-cell').forEach(el => el.classList.remove('active'));
+  });
+}());
+
+document.getElementById('fmt-table-btn').addEventListener('click', () => insertTable(2, 3));
+document.getElementById('fmt-table-dd').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('fmt-table-menu').classList.toggle('open');
+  document.getElementById('fmt-heading-menu').classList.remove('open');
+  document.getElementById('fmt-code-menu').classList.remove('open');
+});
+
 document.getElementById('fmt-heading-dd').addEventListener('click', (e) => {
   e.stopPropagation();
   document.getElementById('fmt-heading-menu').classList.toggle('open');
@@ -1698,6 +1931,7 @@ document.getElementById('fmt-code-block').addEventListener('click', () => {
 document.addEventListener('click', () => {
   document.getElementById('fmt-heading-menu').classList.remove('open');
   document.getElementById('fmt-code-menu').classList.remove('open');
+  document.getElementById('fmt-table-menu').classList.remove('open');
   document.getElementById('hdr-more-menu').classList.remove('open');
 });
 
@@ -2439,6 +2673,8 @@ function initSidebar() {
   // Browse all button
   const browseBtn = document.getElementById('sidebar-browse-all-btn');
   if (browseBtn) browseBtn.addEventListener('click', openDocBrowser);
+  const trashBtn = document.getElementById('sidebar-trash-btn');
+  if (trashBtn) trashBtn.addEventListener('click', openTrashModal);
 
   // Move modal buttons
   document.getElementById('move-modal-cancel')?.addEventListener('click', closeMoveModal);

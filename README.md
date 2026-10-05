@@ -22,6 +22,11 @@ A cloud-first Markdown editor that lives in your browser. Sign in once and your 
 - **Preview zoom** — Scale the preview pane independently of the editor
 - **Document tags** — Tag documents and filter your library by tag; tags are stored in Firestore alongside the document
 - **Sidebar navigation** — persistent left panel showing your document list with search, new-document button, and browse-all link; collapsible via toolbar button or Ctrl/Cmd+\
+- **Nested pages** — documents can be organized into a hierarchy; create child pages from the sidebar context menu and drag to rearrange
+- **Trash bin** — deleted documents move to Trash and can be restored or permanently deleted; accessible via the sidebar footer
+- **Full-text search** — the document browser searches inside document content and shows a highlighted snippet when the match is in the body rather than the title or tags
+- **Table insert** — toolbar button inserts a Markdown table; the dropdown arrow opens a 5×5 grid picker to choose the exact dimensions
+- **Mermaid diagrams** — fenced code blocks tagged ` ```mermaid ` render as live diagrams in the preview pane
 - **Delete My Account** — permanently delete your account and all documents from within the app, after typed confirmation and re-authentication
 
 ---
@@ -107,11 +112,21 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 | [highlight.js](https://highlightjs.org) | Syntax highlighting |
 | [DOMPurify](https://github.com/cure53/DOMPurify) | XSS sanitization |
 | [Turndown](https://github.com/mixmark-io/turndown) | HTML → Markdown (focus mode exit) |
+| [Mermaid](https://mermaid.js.org) | Diagram rendering |
 | Firebase Hosting | Deployment |
 
 ---
 
 ## Changelog
+
+### v3.24.0
+- **Mermaid diagrams** — fenced code blocks tagged ` ```mermaid ` render as live flowcharts, sequence diagrams, Gantt charts, and more in the preview pane
+- **Table insert** — new toolbar split-button inserts a default Markdown table; the dropdown arrow opens a 5×5 hover grid to pick exact dimensions
+- **Full-text search** — document browser now searches inside document content; matching body text shows a highlighted snippet beneath the title
+- **Trash bin** — deleted documents are soft-deleted and moved to Trash (sidebar footer icon); restore individual documents or empty the trash permanently
+
+### v3.23.0
+- **Nested pages** — documents can be organized into a parent/child hierarchy from the sidebar; drag to rearrange, and expand/collapse subtrees
 
 ### v3.22.0
 - **Sidebar navigation** — persistent left panel (Notion/Anytype-style) shows your recent documents, a search field, a new-document button, and a "Browse all" link to the full document browser; collapses inline on desktop or slides in as an overlay on mobile; state persists across sessions
