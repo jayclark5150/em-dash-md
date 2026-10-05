@@ -476,6 +476,28 @@ body {
 #sidebar-search::placeholder { color: var(--text2); opacity: .7; }
 #sidebar-search:focus { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent); }
 
+/* Sort toggle */
+#sidebar-sort-bar {
+  display: flex;
+  gap: 4px;
+  padding: 4px 10px 6px;
+  flex-shrink: 0;
+}
+.sb-sort-btn {
+  flex: 1;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 0;
+  font-size: 11px;
+  font-family: var(--font);
+  color: var(--text2);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.sb-sort-btn:hover { background: var(--bg3); color: var(--text); }
+.sb-sort-btn.active { background: var(--bg3); color: var(--text); border-color: var(--accent); }
+
 /* New doc button */
 #sidebar-new-btn {
   margin: 4px 10px 6px;

@@ -119,6 +119,9 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.26.0
+- **Sidebar sort toggle** — switch between **Groups** (hierarchical tree) and **Name** (flat A–Z list) using the toggle below the search box; preference persists across sessions
+
 ### v3.25.0
 - **Resizable sidebar** — drag the handle between the sidebar and editor to set any width you like; the chosen width persists across sessions; double-click the handle to reset to the default
 

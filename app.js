@@ -2355,6 +2355,7 @@ function handleKeyboardVisibility() {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 let _sidebarDocs = [];        // cached doc list for the sidebar
 let _sidebarFilter = '';      // current search filter text
+let _sidebarSort = localStorage.getItem('sidebar-sort') || 'groups'; // 'groups' | 'name'
 let _sidebarExpanded = new Set(JSON.parse(localStorage.getItem('sidebar-expanded') || '[]'));
 
 function _saveExpandedState() {
@@ -2445,6 +2446,29 @@ function renderSidebarTree(docs, filter) {
       return;
     }
     list.innerHTML = filtered.map(d => {
+      const title = (d.title || 'Untitled').replace(/\.md$/i, '');
+      const isActive = d.id === currentDocId;
+      return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${d.id}" style="padding-left:8px" title="${esc(d.title || '')}">
+        <span class="sb-chevron-placeholder"></span>
+        <span class="sb-icon">${ICON_DOC}</span>
+        <span class="sidebar-item-title">${esc(title)}</span>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.sidebar-item').forEach(el => {
+      el.addEventListener('click', () => loadDoc(el.dataset.id));
+    });
+    return;
+  }
+
+  if (_sidebarSort === 'name') {
+    if (!docs.length) {
+      list.innerHTML = `<div class="sidebar-empty">No documents yet</div>`;
+      return;
+    }
+    const sorted = [...docs].sort((a, b) =>
+      (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase())
+    );
+    list.innerHTML = sorted.map(d => {
       const title = (d.title || 'Untitled').replace(/\.md$/i, '');
       const isActive = d.id === currentDocId;
       return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${d.id}" style="padding-left:8px" title="${esc(d.title || '')}">
@@ -2719,6 +2743,20 @@ function initSidebar() {
       renderSidebarTree(_sidebarDocs, _sidebarFilter);
     });
   }
+
+  // Sort toggle
+  document.querySelectorAll('.sb-sort-btn').forEach(btn => {
+    if (btn.dataset.sort === _sidebarSort) btn.classList.add('active');
+    else btn.classList.remove('active');
+    btn.addEventListener('click', () => {
+      _sidebarSort = btn.dataset.sort;
+      localStorage.setItem('sidebar-sort', _sidebarSort);
+      document.querySelectorAll('.sb-sort-btn').forEach(b =>
+        b.classList.toggle('active', b.dataset.sort === _sidebarSort)
+      );
+      renderSidebarTree(_sidebarDocs, _sidebarFilter);
+    });
+  });
 
   // New doc button (root-level)
   const newBtn = document.getElementById('sidebar-new-btn');
