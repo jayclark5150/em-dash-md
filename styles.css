@@ -371,9 +371,9 @@ body {
 
 /* ── Sidebar ── */
 #sidebar {
-  width: var(--sb-w);
-  min-width: var(--sb-w);
-  max-width: var(--sb-w);
+  width: var(--sb-user-w, var(--sb-w));
+  min-width: var(--sb-user-w, var(--sb-w));
+  max-width: var(--sb-user-w, var(--sb-w));
   background: var(--bg2);
   border-right: 1px solid var(--border);
   display: flex;
@@ -391,12 +391,36 @@ body {
 }
 
 #sidebar-inner {
-  width: var(--sb-w);
+  width: var(--sb-user-w, var(--sb-w));
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
+
+/* Sidebar drag-to-resize handle (desktop only) */
+#sidebar-resizer {
+  flex: 0 0 5px;
+  width: 5px;
+  margin-left: -3px;
+  margin-right: -2px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 11;
+  background: transparent;
+  touch-action: none;
+  transition: background 120ms ease;
+}
+#sidebar-resizer:hover,
+#sidebar-resizer:focus-visible,
+#app-shell.sb-resizing #sidebar-resizer {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: none;
+}
+#app-shell.sidebar-collapsed #sidebar-resizer { display: none; }
+/* No width animation while dragging, and no text selection or iframe stealing events */
+#app-shell.sb-resizing #sidebar { transition: none; }
+#app-shell.sb-resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 
 /* Sidebar header */
 #sidebar-header {
@@ -620,6 +644,8 @@ body.theme-light #sidebar {
 
 /* ── Mobile responsive ── */
 @media (max-width: 600px) {
+  #sidebar-resizer { display: none; }
+  #sidebar-inner { width: var(--sb-w); }
   #sidebar {
     position: fixed;
     top: 0; left: 0; bottom: 0;

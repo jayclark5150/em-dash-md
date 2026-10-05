@@ -2619,6 +2619,73 @@ async function confirmMove() {
   }
 }
 
+// ── Sidebar drag-to-resize ──
+const SB_MIN_W = 180;
+const SB_MAX_W = 560;
+const SB_DEFAULT_W = 230;
+
+function initSidebarResize(shell) {
+  const handle = document.getElementById('sidebar-resizer');
+  if (!handle) return;
+
+  // Keep the sidebar from swallowing the editor on narrow windows
+  const clamp = (w) => Math.round(Math.min(SB_MAX_W, Math.max(SB_MIN_W, Math.min(w, window.innerWidth * 0.6))));
+  const apply = (w) => document.documentElement.style.setProperty('--sb-user-w', w + 'px');
+  const save = (w) => { try { localStorage.setItem('sidebar-width', String(w)); } catch (_) {} };
+  const currentW = () => document.getElementById('sidebar').getBoundingClientRect().width;
+
+  // Restore saved width
+  const saved = parseInt(localStorage.getItem('sidebar-width'), 10);
+  if (Number.isFinite(saved)) apply(clamp(saved));
+
+  let startX = 0, startW = 0;
+
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    startX = e.clientX;
+    startW = currentW();
+    handle.setPointerCapture(e.pointerId);
+    shell.classList.add('sb-resizing');
+  });
+
+  handle.addEventListener('pointermove', (e) => {
+    if (!handle.hasPointerCapture(e.pointerId)) return;
+    apply(clamp(startW + (e.clientX - startX)));
+  });
+
+  const endDrag = (e) => {
+    if (!shell.classList.contains('sb-resizing')) return;
+    shell.classList.remove('sb-resizing');
+    if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+    save(clamp(currentW()));
+  };
+  handle.addEventListener('pointerup', endDrag);
+  handle.addEventListener('pointercancel', endDrag);
+
+  // Double-click resets to default
+  handle.addEventListener('dblclick', () => {
+    document.documentElement.style.removeProperty('--sb-user-w');
+    try { localStorage.removeItem('sidebar-width'); } catch (_) {}
+  });
+
+  // Keyboard: arrow keys nudge the width (Shift = bigger steps)
+  handle.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const step = e.shiftKey ? 40 : 10;
+    const w = clamp(currentW() + (e.key === 'ArrowRight' ? step : -step));
+    apply(w);
+    save(w);
+  });
+
+  // Re-clamp if the window shrinks below the saved width
+  window.addEventListener('resize', () => {
+    const cur = parseInt(document.documentElement.style.getPropertyValue('--sb-user-w'), 10);
+    if (Number.isFinite(cur) && clamp(cur) !== cur) apply(clamp(cur));
+  });
+}
+
 function initSidebar() {
   // Restore collapsed state
   const savedState = localStorage.getItem('sidebar-state');
@@ -2629,6 +2696,8 @@ function initSidebar() {
   if (savedState === 'closed' || (window.innerWidth <= 600 && savedState !== 'open')) {
     shell.classList.add('sidebar-collapsed');
   }
+
+  initSidebarResize(shell);
 
   // Toggle button in header bar
   const toggleBtn = document.getElementById('sidebar-toggle-btn');
