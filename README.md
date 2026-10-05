@@ -119,6 +119,9 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.25.0
+- **Resizable sidebar** — drag the handle between the sidebar and editor to set any width you like; the chosen width persists across sessions; double-click the handle to reset to the default
+
 ### v3.24.0
 - **Mermaid diagrams** — fenced code blocks tagged ` ```mermaid ` render as live flowcharts, sequence diagrams, Gantt charts, and more in the preview pane
 - **Table insert** — new toolbar split-button inserts a default Markdown table; the dropdown arrow opens a 5×5 hover grid to pick exact dimensions
