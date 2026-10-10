@@ -1,4 +1,4 @@
-const CACHE = 'em-dash-md-v14';
+const CACHE = 'em-dash-md-v15';
 const ASSETS = [
   '/',
   '/index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   'https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js',
   'https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js',
   'https://cdn.jsdelivr.net/npm/turndown@7.2.0/dist/turndown.js',
+  'https://cdn.jsdelivr.net/npm/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js',
   'https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/highlight.min.js',
   'https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.9.0/styles/github.min.css',
 ];

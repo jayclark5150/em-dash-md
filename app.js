@@ -429,7 +429,7 @@ if (window.marked && window.hljs) {
         text = (text == null) ? '' : String(text);
         if (lang) lang = lang.trim().split(/\s+/)[0];
         if (lang === 'mermaid') {
-          return `<div class="mermaid-pending">${esc(text)}</div>`;
+          return `<div class="mermaid-pending" data-src="${esc(text)}">${esc(text)}</div>`;
         }
         const language = (lang && hljs.getLanguage(lang)) ? lang : 'plaintext';
         const highlighted = hljs.highlight(text, { language }).value;
@@ -473,10 +473,12 @@ async function renderMermaidDiagrams() {
       const { svg } = await mermaid.render(id, src);
       const wrap = document.createElement('div');
       wrap.className = 'mermaid-diagram';
+      wrap.dataset.src = src;
       wrap.innerHTML = svg;
       block.replaceWith(wrap);
     } catch (e) {
       block.className = 'mermaid-error';
+      block.dataset.src = src;
       block.textContent = 'Diagram error: ' + (e.message || e);
     }
   }
@@ -1550,6 +1552,21 @@ let td;
 function getTurndown() {
   if (!td && window.TurndownService) {
     td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' });
+    if (window.turndownPluginGfm) td.use(window.turndownPluginGfm.gfm);
+    td.addRule('mermaidDiagram', {
+      filter: (node) =>
+        node.nodeName === 'DIV' &&
+        (node.classList.contains('mermaid-diagram') || node.classList.contains('mermaid-error') || node.classList.contains('mermaid-pending')) &&
+        (node.dataset.src !== undefined),
+      replacement: (_content, node) => {
+        const src = node.dataset.src || node.textContent || '';
+        return '\n\n```mermaid\n' + src + '\n```\n\n';
+      }
+    });
+    td.addRule('copyCodeBtn', {
+      filter: (node) => node.nodeName === 'BUTTON' && node.classList.contains('copy-code-btn'),
+      replacement: () => ''
+    });
   }
   return td;
 }
@@ -1654,27 +1671,33 @@ previewInner.contentEditable = 'true';
 previewInner.spellcheck = true;
 
 let previewWysiwygTimer;
+let previewDirty = false;
 
 previewInner.addEventListener('focus', () => { previewEditing = true; });
 
 previewInner.addEventListener('blur', () => {
   previewEditing = false;
   clearTimeout(previewWysiwygTimer);
-  const turndown = getTurndown();
-  if (turndown) {
-    const md = turndown.turndown(previewInner.innerHTML);
-    if (md !== editor.value) {
-      editor.value = md;
-      isDirty = true;
-      scheduleAutoSave();
-      updateStats();
-      updateLineNumbers();
+  const wasPreviewDirty = previewDirty;
+  previewDirty = false;
+  if (wasPreviewDirty) {
+    const turndown = getTurndown();
+    if (turndown) {
+      const md = turndown.turndown(previewInner.innerHTML);
+      if (md !== editor.value) {
+        editor.value = md;
+        isDirty = true;
+        scheduleAutoSave();
+        updateStats();
+        updateLineNumbers();
+      }
     }
   }
   renderPreview();
 });
 
 previewInner.addEventListener('input', () => {
+  previewDirty = true;
   clearTimeout(previewWysiwygTimer);
   previewWysiwygTimer = setTimeout(() => {
     if (!previewEditing) return;

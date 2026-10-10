@@ -397,6 +397,46 @@ through in a live browser.
 - [ ] No layout regression: header, editor, preview, statusbar, focus mode all unaffected
 - [ ] No console errors on load
 
+## Log: 2026-10-10: preview write-back fix + GFM round-trip (fix/preview-writeback-gfm)
+
+**Problem**: the preview pane is `contenteditable`. On every `blur`, app.js ran
+Turndown over the preview HTML and overwrote the editor. A bare click in and out
+(no typing) was enough to trigger this, and Turndown without GFM corrupted
+tables, strikethrough (`~~`), and task-list checkboxes.
+
+**Changes**:
+- `app.js`: added `previewDirty` flag. The `input` listener sets it `true`. The
+  `blur` handler reads and clears it; Turndown write-back and `scheduleAutoSave`
+  only run when it was `true`. `renderPreview()` still runs on every blur.
+- `app.js` `getTurndown()`: calls `td.use(window.turndownPluginGfm.gfm)` when
+  that global is available; adds a Turndown rule to round-trip `.mermaid-pending`,
+  `.mermaid-diagram`, and `.mermaid-error` divs back to fenced mermaid blocks
+  using `data-src`; adds a rule that drops `.copy-code-btn` buttons.
+- `app.js` mermaid code renderer: emits `data-src` on the pending div.
+- `app.js` `renderMermaidDiagrams`: sets `data-src` on the rendered wrapper and
+  the error block.
+- `index.html`: added `turndown-plugin-gfm@1.0.2` script tag (SRI verified,
+  `sha256-z3RMwbdYDwbWTOI2pP8mMKU9OJ7M8hM6CdccpENRGRI=`) after the turndown tag.
+  CSP already allows `cdn.jsdelivr.net`.
+- `sw.js`: cache bumped `v14` to `v15`; plugin URL added to ASSETS.
+- `tests/preview-roundtrip.test.js`: 8 jsdom/jest tests added covering table,
+  strikethrough, task list, fenced code, mermaid round-trips, copy-button
+  suppression, and the `previewDirty` gate behavior.
+
+**QA**: `node --check app.js sw.js` passed; all 8 tests passed.
+
+**Post-deploy checks**
+- [ ] Console shows no SRI or CSP error for `turndown-plugin-gfm`
+- [ ] `window.turndownPluginGfm` is defined (run in DevTools console)
+- [ ] SW cache name reported by DevTools Application tab is `em-dash-md-v15`
+- [ ] Click into preview and immediately click away (no typing): editor content
+  is unchanged, no auto-save fires
+- [ ] Type in the preview pane, click away: changes write back to editor
+- [ ] Paste a table into the editor, click into preview and back out: table is
+  not corrupted
+- [ ] A mermaid block in the editor survives a preview click-in / click-out
+  cycle without being corrupted
+
 ## Log: 2026-09-27: v3.23.0 hotfix, sidebar hover actions invisible
 
 **Cause**: CSS/JS class mismatch. JS renders each tree row as `.sidebar-item`
