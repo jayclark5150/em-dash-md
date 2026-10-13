@@ -1,5 +1,20 @@
 // ── Firebase ──────────────────────────────────────────────────────────────────
 firebase.initializeApp(FIREBASE_CONFIG);
+
+// C-6 (v3.29.0): localStorage can throw (blocked storage, private windows) or hold
+// corrupt values. Every access goes through these helpers so the app always boots.
+function lsGet(key, fallback = null) {
+  try { const v = localStorage.getItem(key); return v === null ? fallback : v; } catch (_) { return fallback; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (_) {}
+}
+function lsGetJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw === null ? fallback : JSON.parse(raw);
+  } catch (_) { return fallback; }
+}
 const db   = firebase.firestore();
 const auth = firebase.auth();
 
@@ -25,12 +40,29 @@ function tsToMs(ts) {
 }
 
 async function fsGetAll(max, opts) {
-  let q = db.collection('documents')
+  const getOpts = opts && opts.source ? { source: opts.source } : undefined;
+  const base = () => db.collection('documents')
     .where('userId', '==', auth.currentUser.uid)
     .orderBy('updatedAt', 'desc');
-  if (max) q = q.limit(max);
-  const snap = await q.get(opts && opts.source ? { source: opts.source } : undefined);
-  return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => !d.isDeleted);
+  const live = (snap) => snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => !d.isDeleted);
+  if (!max) return live(await base().get(getOpts));
+
+  // C-2 (v3.28.0): trashed documents used to occupy slots in the window
+  // because the limit applied before the isDeleted filter. Page forward until
+  // `max` live documents are collected. With nothing in the Trash this is a
+  // single query, exactly as before.
+  const out = [];
+  let last = null;
+  for (let page = 0; page < 6 && out.length < max; page++) {
+    const size = page === 0 ? max : Math.max(max - out.length, 50);
+    let q = base().limit(size);
+    if (last) q = q.startAfter(last);
+    const snap = await q.get(getOpts);
+    out.push(...live(snap));
+    if (snap.docs.length < size) break;
+    last = snap.docs[snap.docs.length - 1];
+  }
+  return out.slice(0, max);
 }
 
 async function fsGet(id) {
@@ -39,15 +71,44 @@ async function fsGet(id) {
   return { id: snap.id, ...snap.data() };
 }
 
-async function fsPut(id, title, content, isNew, parentId) {
+// C-7 (v3.29.0): `baseContent` is the body this editor last loaded or saved. An
+// update runs in a transaction and is refused (error code 'edmd/conflict') when
+// the stored body differs from both baseContent and the new content, i.e.
+// somebody else changed it. Transactions need the server, so when the client
+// is offline the plain queued update is used instead (the old behaviour).
+async function fsPut(id, title, content, isNew, parentId, baseContent) {
   const now = firebase.firestore.FieldValue.serverTimestamp();
   const ref = db.collection('documents').doc(id);
   if (isNew) {
     const data = { userId: auth.currentUser.uid, title, content, createdAt: now, updatedAt: now };
     if (parentId) data.parentId = parentId;
     await ref.set(data);
-  } else {
+    return;
+  }
+  if (baseContent === undefined || baseContent === null) {
     await ref.update({ title, content, updatedAt: now });
+    return;
+  }
+  try {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists) {
+        const remote = snap.data().content || '';
+        if (remote !== baseContent && remote !== content) {
+          const e = new Error('Document changed elsewhere');
+          e.code = 'edmd/conflict';
+          e.remote = { id, ...snap.data() };
+          throw e;
+        }
+      }
+      tx.update(ref, { title, content, updatedAt: now });
+    });
+  } catch (err) {
+    if (err && (err.code === 'unavailable' || err.code === 'deadline-exceeded')) {
+      await ref.update({ title, content, updatedAt: now });
+      return;
+    }
+    throw err;
   }
 }
 
@@ -73,19 +134,81 @@ async function fsRestoreDoc(id) {
 }
 
 async function fsGetTrashed() {
-  // Reuse the existing composite index (userId + updatedAt); filter client-side.
-  const snap = await db.collection('documents')
-    .where('userId', '==', auth.currentUser.uid)
-    .orderBy('updatedAt', 'desc')
-    .get();
-  return snap.docs
-    .map(d => ({ id: d.id, ...d.data() }))
-    .filter(d => d.isDeleted)
-    .sort((a, b) => tsToMs(b.deletedAt) - tsToMs(a.deletedAt));
+  // C-1 (v3.28.0): equality-only query (userId + isDeleted), so Firestore serves
+  // it from the automatic single-field indexes with no composite index, and only
+  // trashed documents are read. If the query is ever rejected, fall back to the
+  // old full read so Trash keeps working.
+  let docs;
+  try {
+    const snap = await db.collection('documents')
+      .where('userId', '==', auth.currentUser.uid)
+      .where('isDeleted', '==', true)
+      .get();
+    docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.warn('trash query failed, falling back to full read:', err);
+    const snap = await db.collection('documents')
+      .where('userId', '==', auth.currentUser.uid)
+      .orderBy('updatedAt', 'desc')
+      .get();
+    docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.isDeleted);
+  }
+  return docs.sort((a, b) => tsToMs(b.deletedAt) - tsToMs(a.deletedAt));
 }
 
 async function fsUpdateTags(id, tags) {
   await db.collection('documents').doc(id).update({ tags });
+}
+
+// ── Folders (v3.27.0) ─────────────────────────────────────────────────────────
+// A folder is an ordinary document with type: 'folder' and empty content.
+// Documents with no `type` field are plain documents, so no migration is needed.
+async function fsCreateFolder(id, name, parentId) {
+  const now = firebase.firestore.FieldValue.serverTimestamp();
+  const data = {
+    userId: auth.currentUser.uid, title: name, content: '', type: 'folder',
+    createdAt: now, updatedAt: now,
+  };
+  if (parentId) data.parentId = parentId;
+  await db.collection('documents').doc(id).set(data);
+}
+
+async function fsRename(id, title) {
+  await db.collection('documents').doc(id).update({
+    title, updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+// Firestore batches cap at 500 writes; stay well under.
+async function fsBatchChunks(ids, fn) {
+  for (let i = 0; i < ids.length; i += 400) {
+    const batch = db.batch();
+    ids.slice(i, i + 400).forEach(id => fn(batch, db.collection('documents').doc(id), id));
+    await batch.commit();
+  }
+}
+
+// Trash a folder together with everything inside it. Descendants are tagged
+// with trashedBy so Restore / Delete permanently on the folder act on exactly
+// the items that went in with it.
+async function fsTrashMany(ids, rootId) {
+  const now = firebase.firestore.FieldValue.serverTimestamp();
+  await fsBatchChunks(ids, (batch, ref, id) => {
+    const data = { isDeleted: true, deletedAt: now };
+    if (id !== rootId) data.trashedBy = rootId;
+    batch.update(ref, data);
+  });
+}
+
+async function fsRestoreMany(ids) {
+  const del = firebase.firestore.FieldValue.delete();
+  await fsBatchChunks(ids, (batch, ref) => {
+    batch.update(ref, { isDeleted: del, deletedAt: del, trashedBy: del });
+  });
+}
+
+async function fsDeleteMany(ids) {
+  await fsBatchChunks(ids, (batch, ref) => batch.delete(ref));
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
@@ -204,9 +327,35 @@ document.getElementById('auth-google-btn').addEventListener('click', async () =>
   }
 });
 
+// C-9 (v3.29.0): nothing from the previous user may stay in the DOM or in the
+// browser's offline cache after sign-out.
+function clearPrivateUi() {
+  ['doc-browser-list', 'kanban-board', 'trash-list', 'move-modal-list', 'sidebar-list'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = '';
+  });
+  ['doc-browser-modal', 'trash-modal', 'move-modal', 'new-modal'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('open');
+  });
+  const kb = document.getElementById('kanban-panel');
+  if (kb) kb.classList.add('hidden');
+  _mermaidCache.clear();
+}
+
+// Terminate Firestore, wipe the IndexedDB cache, then reload so the page
+// restarts with a clean client. A failure to clear (for example another tab
+// still has the app open) is logged and the reload still happens.
+async function purgeLocalDataAndReload() {
+  try { await db.terminate(); } catch (err) { console.warn('terminate failed:', err); }
+  try { await db.clearPersistence(); } catch (err) { console.warn('clearPersistence failed:', err); }
+  location.reload();
+}
+
 document.getElementById('signout-btn').addEventListener('click', async () => {
   if (isDirty) await performSave(true);
   await auth.signOut();
+  await purgeLocalDataAndReload();
 });
 
 // ── Delete account ────────────────────────────────────────────────────────────
@@ -326,6 +475,7 @@ document.getElementById('delete-account-confirm-btn').addEventListener('click', 
     deletionInProgress = false;
     closeDeleteAccountModal();
     showToast('Account deleted');
+    await purgeLocalDataAndReload();
   } catch (deleteErr) {
     errorEl.textContent = 'Could not fully delete account. It is safe to retry — any already-deleted documents will not be re-created.';
     errorEl.style.display = '';
@@ -368,6 +518,17 @@ auth.onAuthStateChanged(async (user) => {
       setAuthLoading(false);
       return;
     }
+    // C-13 (v3.29.0): the Firestore rules require a verified email, so an
+    // unverified password account would only see permission-denied. Send the
+    // verification mail and explain, instead of booting into a broken app.
+    const usesPassword = (user.providerData || []).some(p => p.providerId === 'password');
+    if (usesPassword && !user.emailVerified) {
+      try { await user.sendEmailVerification(); } catch (_) { /* rate limited: the earlier mail still works */ }
+      pendingAuthError = 'Verify your email first. We sent a link to ' + user.email + '. Open it, then sign in again.';
+      await auth.signOut();
+      setAuthLoading(false);
+      return;
+    }
     hideAuthOverlay();
     setAuthLoading(false);
     if (!appBooted) {
@@ -387,6 +548,11 @@ auth.onAuthStateChanged(async (user) => {
     renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
     document.getElementById('drive-delete-btn').style.display = 'none';
     appBooted = false;
+    currentParentId = null;
+    currentBaseContent = undefined;
+    _conflictHold = null;
+    resetSidebarState();
+    clearPrivateUi();
     loadReadmePreview();
   }
 });
@@ -411,7 +577,8 @@ const toast          = document.getElementById('toast');
 
 // ── Marked setup ─────────────────────────────────────────────────────────────
 if (window.mermaid) {
-  mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: 'neutral' });
+  // C-8 (v3.29.0): 'strict' encodes labels and disables click handlers.
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'neutral' });
 }
 
 if (window.marked && window.hljs) {
@@ -463,19 +630,57 @@ function renderPreview() {
 }
 
 let _mermaidCounter = 0;
+// C-8 (v3.29.0): rendered SVG is sanitized before it touches the DOM (fail
+// closed without DOMPurify) and cached by diagram source, so an unchanged
+// diagram is not re-rendered on every preview refresh.
+const _mermaidCache = new Map();
+const MERMAID_CACHE_MAX = 50;
+// v3.29.1: Mermaid builds a throwaway element from label text before its own
+// cleanup runs, so a label like <img src=x onerror=...> tries to fire its inline
+// handler during render (the CSP blocks it, but strict mode alone does not
+// prevent it). Remove HTML tags that are not plain formatting tags with no
+// attributes from the diagram text BEFORE Mermaid sees it. Arrows and
+// annotations such as -->, <|--, <<interface>> are not tags and are untouched.
+const MERMAID_SAFE_TAGS = new Set(['br', 'b', 'i', 'u', 's', 'em', 'strong', 'sub', 'sup', 'small']);
+function sanitizeMermaidSource(src) {
+  return String(src).replace(/<\s*(\/?)\s*([a-zA-Z][\w:-]*)([^<>]*)>/g, (m, _close, name, rest, offset, whole) => {
+    if (offset > 0 && whole[offset - 1] === '<') return m;           // <<interface>>
+    const bare = /^\s*\/?\s*$/.test(rest);
+    // A space, not nothing: a label that held only a tag must not become empty (C[""] is a Mermaid syntax error).
+    return (MERMAID_SAFE_TAGS.has(name.toLowerCase()) && bare) ? m : ' ';
+  });
+}
+function sanitizeMermaidSvg(svg) {
+  if (!window.DOMPurify) return '';
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true, html: true },
+    ADD_TAGS: ['foreignObject'],
+  });
+}
+function mermaidWrap(src, svg) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mermaid-diagram';
+  wrap.dataset.src = src;
+  wrap.innerHTML = svg;
+  return wrap;
+}
 async function renderMermaidDiagrams() {
   if (!window.mermaid) return;
   const blocks = previewInner.querySelectorAll('.mermaid-pending');
   for (const block of blocks) {
     const src = block.textContent;
+    if (_mermaidCache.has(src)) {
+      block.replaceWith(mermaidWrap(src, _mermaidCache.get(src)));
+      continue;
+    }
     const id  = 'mmd-' + (++_mermaidCounter);
     try {
-      const { svg } = await mermaid.render(id, src);
-      const wrap = document.createElement('div');
-      wrap.className = 'mermaid-diagram';
-      wrap.dataset.src = src;
-      wrap.innerHTML = svg;
-      block.replaceWith(wrap);
+      const { svg } = await mermaid.render(id, sanitizeMermaidSource(src));
+      const clean = sanitizeMermaidSvg(svg);
+      if (!clean) throw new Error('diagram could not be sanitized');
+      if (_mermaidCache.size >= MERMAID_CACHE_MAX) _mermaidCache.delete(_mermaidCache.keys().next().value);
+      _mermaidCache.set(src, clean);
+      block.replaceWith(mermaidWrap(src, clean));
     } catch (e) {
       block.className = 'mermaid-error';
       block.dataset.src = src;
@@ -711,19 +916,57 @@ function scheduleAutoSave() {
   autoSaveTimer = setTimeout(async () => { await performSave(true); }, 2000);
 }
 
-async function performSave(silent = false) {
+// Saves run one at a time. Two overlapping saves of a brand-new document used to
+// both call set() and the second overwrote createdAt and any field written in
+// between; queued, the second one is an update.
+let _saveChain = Promise.resolve();
+let _conflictHold = null;   // { id, remote } while a save is paused by a conflict
+let currentBaseContent;     // body last loaded or saved for the open document
+
+function performSave(silent = false) {
+  const run = () => doSave(silent);
+  _saveChain = _saveChain.then(run, run);
+  return _saveChain;
+}
+
+function handleSaveConflict(id, remote, silent) {
+  _conflictHold = { id, remote };
+  showSaveStatus('Conflict');
+  const loadTheirs = () => { _conflictHold = null; applyDoc(remote); };
+  if (!silent) {
+    const overwrite = confirm(
+      'This document was changed somewhere else since you opened it.\n\n' +
+      'OK: overwrite it with what is in this editor.\n' +
+      'Cancel: keep your text here, unsaved.');
+    if (overwrite) {
+      _conflictHold = null;
+      currentBaseContent = remote.content || '';
+      performSave(false);
+      return;
+    }
+  }
+  showToast('Changed on another device. Saving is paused for this document.', 12000, { label: 'Load their version', fn: loadTheirs });
+}
+
+async function doSave(silent = false) {
   if (!auth.currentUser) return;
+  if (silent && _conflictHold && _conflictHold.id === currentDocId) return;
   const content = editor.value;
   const title   = currentTitle || 'Untitled';
   showSaveStatus('Saving…');
   try {
     if (!currentDocId) { currentDocId = crypto.randomUUID(); currentDocIsNew = true; }
-    await fsPut(currentDocId, title, content, currentDocIsNew, currentParentId);
+    const savedId = currentDocId, savedParent = currentParentId;
+    await fsPut(savedId, title, content, currentDocIsNew, savedParent, currentBaseContent);
     currentDocIsNew = false;
-    isDirty = false;
+    currentBaseContent = content;
+    // C-7 (partial): only clear dirty if nothing was typed while the save ran.
+    if (editor.value === content) isDirty = false;
     showSaveStatus('Saved');
-    refreshSidebarList();
+    // C-1 (v3.28.0): update the sidebar locally instead of re-reading 300 documents.
+    syncSidebarAfterSave(savedId, title, content, savedParent);
   } catch (err) {
+    if (err && err.code === 'edmd/conflict') { handleSaveConflict(err.remote.id, err.remote, silent); return; }
     console.error('Save failed:', err);
     showSaveStatus('Save failed');
     if (!silent) showToast('Save failed — check console for details');
@@ -759,6 +1002,7 @@ function createNewDoc() {
   clearTimeout(autoSaveTimer);
   currentDocIsNew = true;
   currentDocId = null;
+  currentParentId = null;
   isDirty      = false;
   editor.value = '';
   let name = document.getElementById('new-filename').value.trim() || 'untitled.md';
@@ -928,7 +1172,7 @@ async function renderDocBrowserList(query, opts) {
     const createdDate = d.createdAt ? fmtDate(d.createdAt) : null;
     const words       = wordCount(d);
     const extMatch    = (d.title || '').match(/\.([a-z0-9]+)$/i);
-    const docType     = extMatch ? extMatch[1].toUpperCase().slice(0, 4) : 'MD';
+    const docType     = d.type === 'folder' ? 'DIR' : (extMatch ? extMatch[1].toUpperCase().slice(0, 4) : 'MD');
     const tags        = d.tags || [];
     const tagHtml     = tags.map(t => `<span class="file-tag">${esc(t)}</span>`).join('');
     const modifiedTitle = createdDate && createdDate !== modDate ? ` title="Created ${esc(createdDate)}"` : '';
@@ -957,7 +1201,7 @@ async function renderDocBrowserList(query, opts) {
           ${tagHtml}<button class="file-tag-btn" data-id="${esc(d.id)}" title="Edit tags">${tags.length ? EDIT_SVG : '+ tag'}</button>
         </div>
       </div>
-      <div class="file-col-words">${words.toLocaleString()}</div>
+      <div class="file-col-words">${d.type === 'folder' ? '' : words.toLocaleString()}</div>
       <div class="file-col-modified"${modifiedTitle}>${esc(modDate)}</div>
     </div>`;
   }).join('');
@@ -967,8 +1211,9 @@ async function renderDocBrowserList(query, opts) {
     el.addEventListener('click', (e) => {
       if (e.target.closest('.file-tag-btn, .file-tag-input')) return;
       if (kanbanPickTarget) { loadDoc(el.dataset.id); return; }
-      if (isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
       const doc = docMap.get(el.dataset.id);
+      // Folders never replace the editor, so no unsaved-changes prompt for them.
+      if (!(doc && doc.type === 'folder') && isDirty && !confirm('You have unsaved changes. Open this document anyway?')) return;
       if (doc) applyDoc(doc); else loadDoc(el.dataset.id);
     });
   });
@@ -1010,11 +1255,15 @@ async function renderDocBrowserList(query, opts) {
 }
 
 function applyDoc(doc) {
+  // A folder has no body: reveal it in the sidebar instead of opening it.
+  if (doc && doc.type === 'folder') { closeDocBrowser(); revealInSidebar(doc.id); return; }
   clearTimeout(autoSaveTimer);
   currentDocId = doc.id;
   currentDocIsNew = false;
   currentParentId = doc.parentId || null;
   editor.value = doc.content || '';
+  currentBaseContent = doc.content || '';
+  _conflictHold = null;
   setTitle(doc.title || 'Untitled');
   isDirty = false;
   renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
@@ -1027,6 +1276,13 @@ function applyDoc(doc) {
 }
 
 async function loadDoc(id) {
+  const knownDoc = _sidebarDocs.find(d => d.id === id);
+  if (knownDoc && knownDoc.type === 'folder') {
+    if (kanbanPickTarget) { showToast("Folders can't be added to the board"); return; }
+    closeDocBrowser();
+    revealInSidebar(id);
+    return;
+  }
   // When the doc browser is being used as a Kanban picker, assign the doc to
   // the chosen column instead of opening it. (Formerly a separate wrapper that
   // redeclared loadDoc; hoisting made it call itself forever. Fixed v3.21.1.)
@@ -1048,7 +1304,9 @@ async function loadMostRecent() {
   try {
     // Only need the single newest doc here — no reason to pull every
     // document's full content just to find it.
-    const docs = await fsGetAll(1);
+    // A few extra rows so a freshly created or renamed folder (which sorts
+    // newest) is skipped: folders are never opened in the editor.
+    const docs = (await fsGetAll(10)).filter(d => d.type !== 'folder');
     if (docs.length) {
       await loadDoc(docs[0].id);
     } else {
@@ -1075,6 +1333,8 @@ async function duplicateCurrentDoc() {
     await fsPut(newId, newTitle, content, true);
     currentDocId    = newId;
     currentDocIsNew = false;
+    currentBaseContent = content;
+    _conflictHold   = null;
     isDirty         = false;
     setTitle(newTitle);
     document.getElementById('drive-delete-btn').style.display = 'inline-flex';
@@ -1089,13 +1349,15 @@ async function duplicateCurrentDoc() {
 async function deleteCurrentDoc() {
   if (!currentDocId) return;
 
-  const deletedId      = currentDocId;
-  const deletedTitle   = currentTitle;
-  const deletedContent = editor.value;
+  const deletedId       = currentDocId;
+  const deletedTitle    = currentTitle;
+  const deletedContent  = editor.value;
+  const deletedParentId = currentParentId;
 
   clearTimeout(autoSaveTimer);
   currentDocId    = null;
   currentDocIsNew = true;
+  currentParentId = null;
   isDirty         = false;
   editor.value    = '';
   setTitle('New Document');
@@ -1109,6 +1371,9 @@ async function deleteCurrentDoc() {
       undone          = true;
       currentDocId    = deletedId;
       currentDocIsNew = false;
+      currentBaseContent = deletedContent;
+      _conflictHold   = null;
+      currentParentId = deletedParentId;
       isDirty         = false;
       editor.value    = deletedContent;
       setTitle(deletedTitle);
@@ -1171,8 +1436,8 @@ document.getElementById('doc-browser-modal').addEventListener('click', (e) => {
   const modal = document.querySelector('#doc-browser-modal .modal');
   const grip  = document.getElementById('doc-browser-resize-grip');
 
-  const saved = JSON.parse(localStorage.getItem('doc-browser-size') || 'null');
-  if (saved) {
+  const saved = lsGetJson('doc-browser-size', null);
+  if (saved && Number.isFinite(saved.w) && Number.isFinite(saved.h)) {
     modal.style.width    = saved.w + 'px';
     modal.style.height   = saved.h + 'px';
     modal.style.maxWidth  = 'none';
@@ -1196,7 +1461,7 @@ document.getElementById('doc-browser-modal').addEventListener('click', (e) => {
     function onUp() {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      localStorage.setItem('doc-browser-size', JSON.stringify({ w: modal.offsetWidth, h: modal.offsetHeight }));
+      lsSet('doc-browser-size', JSON.stringify({ w: modal.offsetWidth, h: modal.offsetHeight }));
     }
 
     document.addEventListener('mousemove', onMove);
@@ -1226,8 +1491,19 @@ async function renderTrashList() {
     return;
   }
 
+  // Items that went to Trash inside a folder are listed under that folder.
+  const trashedIdSet = new Set(docs.map(d => d.id));
+  const nestedCount = new Map();
+  docs.forEach(d => {
+    if (d.trashedBy && trashedIdSet.has(d.trashedBy)) {
+      nestedCount.set(d.trashedBy, (nestedCount.get(d.trashedBy) || 0) + 1);
+    }
+  });
+  const visibleDocs = docs.filter(d => !(d.trashedBy && trashedIdSet.has(d.trashedBy)));
+  const treeIdsFor = (rootId) => [rootId, ...docs.filter(x => x.trashedBy === rootId).map(x => x.id)];
+
   const countEl = document.getElementById('trash-count');
-  countEl.textContent = `${docs.length} deleted document${docs.length !== 1 ? 's' : ''}`;
+  countEl.textContent = `${visibleDocs.length} deleted item${visibleDocs.length !== 1 ? 's' : ''}`;
 
   const emptyBtn = document.getElementById('trash-empty-btn');
   emptyBtn.style.display = docs.length ? 'inline-flex' : 'none';
@@ -1241,9 +1517,9 @@ async function renderTrashList() {
     ? new Date(tsToMs(ts)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
     : '—';
 
-  list.innerHTML = docs.map(d => `
+  list.innerHTML = visibleDocs.map(d => `
     <div class="trash-item" data-id="${esc(d.id)}">
-      <span class="trash-item-name" title="${esc(d.title || 'Untitled')}">${esc((d.title || 'Untitled').replace(/\.md$/i, ''))}</span>
+      <span class="trash-item-name" title="${esc(d.title || 'Untitled')}">${d.type === 'folder' ? ICON_FOLDER + ' ' : ''}${esc((d.title || 'Untitled').replace(/\.md$/i, ''))}${nestedCount.get(d.id) ? `<span class="trash-item-count">+${nestedCount.get(d.id)} item${nestedCount.get(d.id) !== 1 ? 's' : ''}</span>` : ''}</span>
       <span class="trash-item-date">Deleted ${esc(fmtDate(d.deletedAt))}</span>
       <span class="trash-item-actions">
         <button class="trash-restore-btn btn btn-secondary" data-id="${esc(d.id)}">Restore</button>
@@ -1255,7 +1531,9 @@ async function renderTrashList() {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try {
-        await fsRestoreDoc(btn.dataset.id);
+        const restoreIds = treeIdsFor(btn.dataset.id);
+        if (restoreIds.length > 1) await fsRestoreMany(restoreIds);
+        else await fsRestoreDoc(btn.dataset.id);
         await refreshSidebarList();
         await renderTrashList();
         showToast('Document restored');
@@ -1271,7 +1549,16 @@ async function renderTrashList() {
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       try {
-        await fsDelete(btn.dataset.id);
+        const deleteIds = treeIdsFor(btn.dataset.id);
+        if (deleteIds.length > 1) {
+          if (!confirm(`Permanently delete this folder and its ${deleteIds.length - 1} item${deleteIds.length - 1 !== 1 ? 's' : ''}? This cannot be undone.`)) {
+            btn.disabled = false;
+            return;
+          }
+          await fsDeleteMany(deleteIds);
+        } else {
+          await fsDelete(btn.dataset.id);
+        }
         await renderTrashList();
       } catch (err) {
         showToast('Delete failed');
@@ -1330,7 +1617,20 @@ async function renderKanban() {
   const board = document.getElementById('kanban-board');
   board.innerHTML = '<div style="color:var(--text2);padding:20px">Loading…</div>';
 
-  const docs = await fsGetAll(2500);
+  // C-1 (v3.28.0): read only documents that are on the board (an `in` filter on
+  // one field plus the userId equality needs no composite index). Fall back to
+  // the old full read if the query is rejected.
+  let docs;
+  try {
+    const snap = await db.collection('documents')
+      .where('userId', '==', auth.currentUser.uid)
+      .where('kanbanStatus', 'in', KANBAN_COLS.map(c => c.id))
+      .get();
+    docs = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => !d.isDeleted);
+  } catch (err) {
+    console.warn('kanban query failed, falling back to full read:', err);
+    docs = await fsGetAll(2500);
+  }
   const byStatus = {};
   KANBAN_COLS.forEach(c => { byStatus[c.id] = []; });
   docs.forEach(d => {
@@ -1417,6 +1717,28 @@ async function renderKanban() {
 document.getElementById('kanban-btn').addEventListener('click', openKanban);
 document.getElementById('kanban-close-btn').addEventListener('click', closeKanban);
 
+// C-11 (v3.29.0): assigning editor.value wipes the textarea's undo stack.
+// Programmatic edits go through execCommand('insertText') so Ctrl+Z still works,
+// with a plain assignment (plus an input event) as the fallback.
+function replaceEditorRange(from, to, text) {
+  editor.focus();
+  editor.setSelectionRange(from, to);
+  const before = editor.value;
+  const expected = before.slice(0, from) + text + before.slice(to);
+  let ok = false;
+  try { ok = document.execCommand('insertText', false, text); } catch (_) {}
+  if (!ok || editor.value !== expected) {
+    editor.value = expected;
+    const pos = from + text.length;
+    editor.setSelectionRange(pos, pos);
+    editor.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+function replaceEditorText(text) {
+  if (editor.value === text) return;
+  replaceEditorRange(0, editor.value.length, text);
+}
+
 // ── List continuation ─────────────────────────────────────────────────────────
 editor.addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
@@ -1438,9 +1760,7 @@ editor.addEventListener('keydown', (e) => {
   e.preventDefault();
 
   if (content === '') {
-    const newValue  = value.slice(0, lineStart) + '\n' + value.slice(lineStart + prefix.length);
-    editor.value    = newValue;
-    editor.setSelectionRange(lineStart + 1, lineStart + 1);
+    replaceEditorRange(lineStart, lineStart + prefix.length, '\n');
   } else {
     let newPrefix;
     if (ordered) {
@@ -1448,11 +1768,7 @@ editor.addEventListener('keydown', (e) => {
     } else {
       newPrefix = unordered[1] + unordered[2] + ' ';
     }
-    const insert    = '\n' + newPrefix;
-    const newValue  = value.slice(0, start) + insert + value.slice(start);
-    const newCursor = start + insert.length;
-    editor.value    = newValue;
-    editor.setSelectionRange(newCursor, newCursor);
+    replaceEditorRange(start, start, '\n' + newPrefix);
   }
 
   isDirty = true;
@@ -1513,6 +1829,7 @@ function doReplace() {
   editor.setSelectionRange(pos, pos + findInput.value.length);
   document.execCommand('insertText', false, replaceInput.value);
   isDirty = true; renderPreview(); updateStats();
+  scheduleAutoSave(); // C-3 (v3.28.0): do not rely on execCommand firing input
   runFind();
 }
 function doReplaceAll() {
@@ -1520,8 +1837,9 @@ function doReplaceAll() {
   if (!q) return;
   const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
   const count = (editor.value.match(re) || []).length;
-  editor.value = editor.value.replace(re, replaceInput.value);
+  replaceEditorText(editor.value.replace(re, () => replaceInput.value));
   isDirty = true; renderPreview(); updateStats(); updateLineNumbers();
+  if (count) scheduleAutoSave(); // C-3 (v3.28.0): assigning .value fires no input event
   showToast(`✓ Replaced ${count} occurrence${count !== 1 ? 's' : ''}`);
   runFind();
 }
@@ -1615,22 +1933,22 @@ function enterFocusMode() {
 
 function exitFocusMode() {
   const turndown = getTurndown();
-  if (turndown) {
-    const md = turndown.turndown(focusWysiwyg.innerHTML);
-    if (md !== editor.value) {
-      editor.value = md;
-      isDirty = true;
-      renderPreview();
-      updateStats();
-      updateLineNumbers();
-    }
-  }
+  const md = turndown ? turndown.turndown(focusWysiwyg.innerHTML) : null;
   focusWysiwyg.innerHTML = '';
   focusMode = false;
   document.body.classList.remove('focus-mode');
   document.getElementById('focus-btn').classList.remove('active');
   if (document.fullscreenElement) {
     document.exitFullscreen().catch(() => {});
+  }
+  if (md !== null && md !== editor.value) {
+    // C-11 (v3.29.0): the editor is visible again here, so the change keeps undo history.
+    replaceEditorText(md);
+    isDirty = true;
+    renderPreview();
+    updateStats();
+    updateLineNumbers();
+    scheduleAutoSave(); // C-3 (v3.28.0)
   }
   editor.focus();
 }
@@ -1648,9 +1966,13 @@ focusWysiwyg.addEventListener('input', () => {
     if (!focusMode) return;
     const turndown = getTurndown();
     if (turndown) {
-      editor.value = turndown.turndown(focusWysiwyg.innerHTML);
-      isDirty = true;
-      updateStats();
+      const md = turndown.turndown(focusWysiwyg.innerHTML);
+      if (md !== editor.value) {
+        editor.value = md;
+        isDirty = true;
+        updateStats();
+        scheduleAutoSave(); // C-3 (v3.28.0): Focus Mode edits are now auto-saved
+      }
     }
   }, 600);
 });
@@ -2057,6 +2379,16 @@ function triggerDownload(blob, filename) {
   showToast(`✓ Downloaded "${filename}"`);
 }
 
+// C-10 (v3.29.0): the live preview carries UI chrome (copy buttons, code-block
+// wrappers, editing flags). Exports use a cleaned clone instead.
+function exportBodyHtml() {
+  const c = previewInner.cloneNode(true);
+  c.querySelectorAll('.copy-code-btn').forEach(b => b.remove());
+  c.querySelectorAll('.code-block').forEach(w => w.replaceWith(...w.childNodes));
+  c.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+  return c.innerHTML;
+}
+
 function buildExportHtml() {
   const title = exportBasename().replace(/</g, '&lt;');
   return `<!DOCTYPE html>
@@ -2080,7 +2412,7 @@ th{background:#f6f8fa;font-weight:600}tr:nth-child(even) td{background:#fafafa}
 img{max-width:100%;height:auto}hr{border:none;border-top:2px solid #e0e0e0;margin:1.5em 0}
 ul,ol{padding-left:1.8em;margin:0 0 .75em}li{margin:.2em 0}
 </style></head>
-<body>${previewInner.innerHTML}</body></html>`;
+<body>${exportBodyHtml()}</body></html>`;
 }
 
 function htmlToRtf(html) {
@@ -2125,7 +2457,24 @@ function htmlToRtf(html) {
       case 'li': return inner();
       case 'a':  return inner();
       case 'hr': return `\\pard\\brdrb\\brdrs\\brdrw10\\brsp20 \\par\n`;
-      case 'table': return `\\pard\\sb100\\sa100 [Table — see HTML export for full table]\\par\n`;
+      case 'table': {
+        // Real RTF table: one \trowd row per <tr>, equal-width bordered cells.
+        const rows = Array.from(node.querySelectorAll('tr'));
+        const total = 8640;
+        let out = '';
+        rows.forEach((tr) => {
+          const cells = Array.from(tr.children).filter(c => /^(td|th)$/i.test(c.tagName));
+          if (!cells.length) return;
+          const w = Math.floor(total / cells.length);
+          const b = '\\clbrdrt\\brdrs\\brdrw10\\clbrdrl\\brdrs\\brdrw10\\clbrdrb\\brdrs\\brdrw10\\clbrdrr\\brdrs\\brdrw10';
+          out += '\\trowd\\trgaph108' + cells.map((_, i) => b + `\\cellx${w * (i + 1)}`).join('') + '\n';
+          out += cells.map((c) => {
+            const body = walk(c);
+            return `\\pard\\intbl ${c.tagName.toLowerCase() === 'th' ? `{\\b ${body}}` : body}\\cell`;
+          }).join('') + '\\row\n';
+        });
+        return out + '\\pard\\sb0\\sa120\\par\n';
+      }
       case 'img': return '';
       case 'thead': case 'tbody': case 'tr': case 'th': case 'td': return inner();
       default: return inner();
@@ -2142,7 +2491,7 @@ function htmlToRtf(html) {
 function exportAsMd()   { if (!editor.value) { showToast('Nothing to export'); return; } triggerDownload(new Blob([editor.value], { type: 'text/markdown' }), exportBasename() + '.md'); }
 function exportAsTxt()  { if (!editor.value) { showToast('Nothing to export'); return; } triggerDownload(new Blob([editor.value], { type: 'text/plain'    }), exportBasename() + '.txt'); }
 function exportAsHtml() { if (!editor.value) { showToast('Nothing to export'); return; } triggerDownload(new Blob([buildExportHtml()], { type: 'text/html'  }), exportBasename() + '.html'); }
-function exportAsRtf()  { if (!editor.value) { showToast('Nothing to export'); return; } triggerDownload(new Blob([htmlToRtf(previewInner.innerHTML)], { type: 'application/rtf' }), exportBasename() + '.rtf'); }
+function exportAsRtf()  { if (!editor.value) { showToast('Nothing to export'); return; } triggerDownload(new Blob([htmlToRtf(exportBodyHtml())], { type: 'application/rtf' }), exportBasename() + '.rtf'); }
 
 async function exportAsDocx() {
   if (!editor.value) { showToast('Nothing to export'); return; }
@@ -2304,6 +2653,7 @@ async function bootApp() {
     clearTimeout(autoSaveTimer);
     currentDocIsNew = true;
     currentDocId = null;
+    currentParentId = null;
     isDirty      = false;
     editor.value = '';
     setTitle('New Document');
@@ -2317,6 +2667,7 @@ async function bootApp() {
 
 // ── Mobile UI Improvements ────────────────────────────────────────────────────
 let mobileMode = 'editor'; // 'editor' or 'preview'
+let _mobileUiWired = false;
 
 function initializeMobileUI() {
   // Only apply mobile UI on screens <= 768px
@@ -2326,16 +2677,20 @@ function initializeMobileUI() {
   if (!toggleBtn) return;
 
   // Load saved preference from localStorage
-  const saved = localStorage.getItem('mobile-view-mode');
-  if (saved) mobileMode = saved;
+  const saved = lsGet('mobile-view-mode');
+  if (saved === 'editor' || saved === 'preview') mobileMode = saved;
 
   // Set initial state
   updateMobileViewMode();
 
+  // C-5 (v3.28.0): bootApp() runs again after every sign-in; wire listeners once.
+  if (_mobileUiWired) return;
+  _mobileUiWired = true;
+
   // Handle toggle button clicks
   toggleBtn.addEventListener('click', () => {
     mobileMode = mobileMode === 'editor' ? 'preview' : 'editor';
-    localStorage.setItem('mobile-view-mode', mobileMode);
+    lsSet('mobile-view-mode', mobileMode);
     updateMobileViewMode();
   });
 
@@ -2378,11 +2733,11 @@ function handleKeyboardVisibility() {
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 let _sidebarDocs = [];        // cached doc list for the sidebar
 let _sidebarFilter = '';      // current search filter text
-let _sidebarSort = localStorage.getItem('sidebar-sort') || 'groups'; // 'groups' | 'name'
-let _sidebarExpanded = new Set(JSON.parse(localStorage.getItem('sidebar-expanded') || '[]'));
+let _sidebarSort = ['groups', 'name'].includes(lsGet('sidebar-sort')) ? lsGet('sidebar-sort') : 'groups'; // 'groups' | 'name'
+let _sidebarExpanded = new Set((() => { const v = lsGetJson('sidebar-expanded', []); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : []; })());
 
 function _saveExpandedState() {
-  localStorage.setItem('sidebar-expanded', JSON.stringify([..._sidebarExpanded]));
+  lsSet('sidebar-expanded', JSON.stringify([..._sidebarExpanded]));
 }
 
 // Build a tree from a flat doc list. Docs missing from the id map (orphans) are
@@ -2416,41 +2771,68 @@ function getDescendantIds(id, childrenOf) {
 
 // SVG icons
 const ICON_DOC  = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2zm2-1a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1H4z"/><path d="M4.5 5h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h7a.5.5 0 0 0 0-1h-7a.5.5 0 0 0 0 1zm0 3h5a.5.5 0 0 0 0-1h-5a.5.5 0 0 0 0 1z"/></svg>`;
+const ICON_FOLDER = `<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.17a1.5 1.5 0 0 1 1.06.44L7.3 3H13.5A1.5 1.5 0 0 1 15 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 11.5v-8z"/></svg>`;
 const ICON_PLUS = `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/></svg>`;
 const ICON_MOVE = `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M7.646.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 1.707V5.5a.5.5 0 0 1-1 0V1.707L6.354 2.854a.5.5 0 1 1-.708-.708l2-2zm-2 13.708a.5.5 0 0 1 .708-.708L7.5 14.293V10.5a.5.5 0 0 1 1 0v3.793l1.646-1.647a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2z"/></svg>`;
 
 function renderSidebarNode(doc, childrenOf, depth) {
-  const children = childrenOf.get(doc.id) || [];
+  const isFolderNode = TreeUtils.isFolder(doc);
+  const children = TreeUtils.orderSiblings(childrenOf.get(doc.id) || []);
   const hasChildren = children.length > 0;
   const isExpanded = _sidebarExpanded.has(doc.id);
   const isActive = doc.id === currentDocId;
   const title = (doc.title || 'Untitled').replace(/\.md$/i, '');
   const indent = depth * 14; // px per level
+  const id = esc(doc.id);
 
-  const chevron = hasChildren
-    ? `<button class="sb-chevron${isExpanded ? ' expanded' : ''}" data-id="${doc.id}" tabindex="-1" title="Expand/collapse">
+  const chevron = (hasChildren || isFolderNode)
+    ? `<button class="sb-chevron${isExpanded ? ' expanded' : ''}" data-id="${id}" tabindex="-1" title="Expand/collapse">
         <svg width="8" height="8" viewBox="0 0 16 16" fill="currentColor"><path d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708z"/></svg>
       </button>`
     : `<span class="sb-chevron-placeholder"></span>`;
 
-  const childrenHtml = hasChildren
-    ? `<div class="sb-children${isExpanded ? '' : ' sb-hidden'}" data-parent="${doc.id}">${
-        children.map(c => renderSidebarNode(c, childrenOf, depth + 1)).join('')
-      }</div>`
-    : '';
+  let childrenHtml = '';
+  if (hasChildren) {
+    childrenHtml = `<div class="sb-children${isExpanded ? '' : ' sb-hidden'}" data-parent="${id}">${
+      children.map(c => renderSidebarNode(c, childrenOf, depth + 1)).join('')
+    }</div>`;
+  } else if (isFolderNode) {
+    childrenHtml = `<div class="sb-children${isExpanded ? '' : ' sb-hidden'}" data-parent="${id}"><div class="sb-empty-folder" style="padding-left:${8 + indent + 38}px">Empty</div></div>`;
+  }
 
-  return `<div class="sb-node" data-node="${doc.id}">
-    <div class="sidebar-item${isActive ? ' active' : ''}" data-id="${doc.id}" style="padding-left:${8 + indent}px" title="${esc(doc.title || '')}">
+  return `<div class="sb-node" data-node="${id}">
+    <div class="sidebar-item${isActive ? ' active' : ''}" data-id="${id}" data-type="${isFolderNode ? 'folder' : 'doc'}" style="padding-left:${8 + indent}px" title="${esc(doc.title || '')}">
       ${chevron}
-      <span class="sb-icon">${ICON_DOC}</span>
+      <span class="sb-icon">${isFolderNode ? ICON_FOLDER : ICON_DOC}</span>
       <span class="sidebar-item-title">${esc(title)}</span>
       <span class="sb-actions">
-        <button class="sb-action-btn sb-add-child" data-id="${doc.id}" title="Add sub-page">${ICON_PLUS}</button>
-        <button class="sb-action-btn sb-move" data-id="${doc.id}" title="Move page">${ICON_MOVE}</button>
+        <button class="sb-action-btn sb-add-child" data-id="${id}" title="${isFolderNode ? 'New document in folder' : 'Add sub-page'}">${ICON_PLUS}</button>
+        <button class="sb-action-btn sb-move" data-id="${id}" title="Move">${ICON_MOVE}</button>
       </span>
     </div>
     ${childrenHtml}
   </div>`;
+}
+
+// One row of the flat lists (search results and Name sort).
+function renderSidebarFlatItem(d) {
+  const folderItem = TreeUtils.isFolder(d);
+  const title = (d.title || 'Untitled').replace(/\.md$/i, '');
+  const isActive = d.id === currentDocId;
+  return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${esc(d.id)}" data-type="${folderItem ? 'folder' : 'doc'}" style="padding-left:8px" title="${esc(d.title || '')}">
+    <span class="sb-chevron-placeholder"></span>
+    <span class="sb-icon">${folderItem ? ICON_FOLDER : ICON_DOC}</span>
+    <span class="sidebar-item-title">${esc(title)}</span>
+  </div>`;
+}
+
+function wireSidebarFlatClicks(list) {
+  list.querySelectorAll('.sidebar-item').forEach(el => {
+    el.addEventListener('click', () => {
+      if (el.dataset.type === 'folder') revealInSidebar(el.dataset.id);
+      else loadDoc(el.dataset.id);
+    });
+  });
 }
 
 function renderSidebarTree(docs, filter) {
@@ -2468,18 +2850,8 @@ function renderSidebarTree(docs, filter) {
       list.innerHTML = `<div class="sidebar-empty">No results</div>`;
       return;
     }
-    list.innerHTML = filtered.map(d => {
-      const title = (d.title || 'Untitled').replace(/\.md$/i, '');
-      const isActive = d.id === currentDocId;
-      return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${d.id}" style="padding-left:8px" title="${esc(d.title || '')}">
-        <span class="sb-chevron-placeholder"></span>
-        <span class="sb-icon">${ICON_DOC}</span>
-        <span class="sidebar-item-title">${esc(title)}</span>
-      </div>`;
-    }).join('');
-    list.querySelectorAll('.sidebar-item').forEach(el => {
-      el.addEventListener('click', () => loadDoc(el.dataset.id));
-    });
+    list.innerHTML = filtered.map(renderSidebarFlatItem).join('');
+    wireSidebarFlatClicks(list);
     return;
   }
 
@@ -2491,18 +2863,8 @@ function renderSidebarTree(docs, filter) {
     const sorted = [...docs].sort((a, b) =>
       (a.title || '').toLowerCase().localeCompare((b.title || '').toLowerCase())
     );
-    list.innerHTML = sorted.map(d => {
-      const title = (d.title || 'Untitled').replace(/\.md$/i, '');
-      const isActive = d.id === currentDocId;
-      return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${d.id}" style="padding-left:8px" title="${esc(d.title || '')}">
-        <span class="sb-chevron-placeholder"></span>
-        <span class="sb-icon">${ICON_DOC}</span>
-        <span class="sidebar-item-title">${esc(title)}</span>
-      </div>`;
-    }).join('');
-    list.querySelectorAll('.sidebar-item').forEach(el => {
-      el.addEventListener('click', () => loadDoc(el.dataset.id));
-    });
+    list.innerHTML = sorted.map(renderSidebarFlatItem).join('');
+    wireSidebarFlatClicks(list);
     return;
   }
 
@@ -2512,13 +2874,14 @@ function renderSidebarTree(docs, filter) {
     return;
   }
 
-  list.innerHTML = roots.map(d => renderSidebarNode(d, childrenOf, 0)).join('');
+  list.innerHTML = TreeUtils.orderSiblings(roots).map(d => renderSidebarNode(d, childrenOf, 0)).join('');
 
   // Wire up clicks
   list.querySelectorAll('.sidebar-item').forEach(el => {
     el.addEventListener('click', (e) => {
       // Don't open doc if a button inside was clicked
-      if (e.target.closest('.sb-action-btn, .sb-chevron')) return;
+      if (e.target.closest('.sb-action-btn, .sb-chevron, .sb-rename-input')) return;
+      if (el.dataset.type === 'folder') { toggleFolder(el.dataset.id); return; }
       loadDoc(el.dataset.id);
     });
   });
@@ -2526,14 +2889,7 @@ function renderSidebarTree(docs, filter) {
   list.querySelectorAll('.sb-chevron').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const id = btn.dataset.id;
-      if (_sidebarExpanded.has(id)) {
-        _sidebarExpanded.delete(id);
-      } else {
-        _sidebarExpanded.add(id);
-      }
-      _saveExpandedState();
-      renderSidebarTree(_sidebarDocs, _sidebarFilter);
+      toggleFolder(btn.dataset.id);
     });
   });
 
@@ -2563,14 +2919,62 @@ function updateSidebarActive() {
   });
 }
 
+// C-2 (v3.28.0): the 300-document window can leave a document's parent outside
+// it, which would promote the child to the root. Fetch the missing ancestors
+// (a handful of single-document reads, bounded) so the tree keeps its shape.
+// Skipped for the cache-only paint, which must never touch the network.
+async function fillMissingAncestors(docs) {
+  const have = new Set(docs.map(d => d.id));
+  let budget = 40;
+  for (let pass = 0; pass < 8 && budget > 0; pass++) {
+    const missing = [...new Set(docs.map(d => d.parentId).filter(p => p && !have.has(p)))].slice(0, budget);
+    if (!missing.length) break;
+    budget -= missing.length;
+    const got = await Promise.all(missing.map(id => fsGet(id).catch(() => null)));
+    missing.forEach((id, i) => {
+      have.add(id); // also marks absent parents so the loop terminates
+      const d = got[i];
+      if (d && !d.isDeleted && d.userId === auth.currentUser.uid) docs.push(d);
+    });
+  }
+  return docs;
+}
+
+async function loadSidebarDocs(opts) {
+  const docs = await fsGetAll(300, opts);
+  if (opts && opts.source === 'cache') return docs;
+  return fillMissingAncestors(docs);
+}
+
 async function refreshSidebarList() {
   if (!auth.currentUser) return;
   try {
-    _sidebarDocs = await fsGetAll(300);
+    _sidebarDocs = await loadSidebarDocs();
     renderSidebarTree(_sidebarDocs, _sidebarFilter);
   } catch (err) {
     console.warn('sidebar refresh failed:', err);
   }
+}
+
+// C-1 (v3.28.0): after a save, patch the cached sidebar window in place. The
+// saved document moves to the front (it is now the most recently updated) and
+// the tree is re-rendered from memory. Zero Firestore reads.
+function syncSidebarAfterSave(id, title, content, parentId) {
+  if (!auth.currentUser) return;
+  const ts = { toMillis: () => Date.now() };
+  const i = _sidebarDocs.findIndex(d => d.id === id);
+  if (i >= 0) {
+    const prev = _sidebarDocs[i];
+    _sidebarDocs.splice(i, 1);
+    _sidebarDocs.unshift({ ...prev, title, content, updatedAt: ts });
+  } else {
+    const fresh = { id, userId: auth.currentUser.uid, title, content, createdAt: ts, updatedAt: ts };
+    if (parentId) fresh.parentId = parentId;
+    _sidebarDocs.unshift(fresh);
+  }
+  // Do not rebuild the tree under an inline rename box.
+  if (document.querySelector('#sidebar-list .sb-rename-input')) return;
+  renderSidebarTree(_sidebarDocs, _sidebarFilter);
 }
 
 // Add a new sub-page under parentId
@@ -2614,7 +3018,8 @@ function openMoveModal(docId) {
 
   document.getElementById('move-modal-title').textContent = `Move "${movingTitle}" to…`;
 
-  const candidates = _sidebarDocs.filter(d => !excluded.has(d.id));
+  const candidates = TreeUtils.orderSiblings(_sidebarDocs.filter(d => !excluded.has(d.id)));
+  const byIdForPath = new Map(_sidebarDocs.map(d => [d.id, d]));
   list.innerHTML = `
     <div class="move-option${!movingDoc?.parentId ? ' move-option-current' : ''}" data-pid="">
       <span class="move-option-icon">⬛</span> Root level
@@ -2622,8 +3027,9 @@ function openMoveModal(docId) {
     ${candidates.map(d => {
       const isCurrent = d.id === movingDoc?.parentId;
       const title = (d.title || 'Untitled').replace(/\.md$/i, '');
-      return `<div class="move-option${isCurrent ? ' move-option-current' : ''}" data-pid="${d.id}">
-        <span class="move-option-icon">${ICON_DOC}</span> ${esc(title)}
+      const path = TreeUtils.ancestorTitles(d.id, byIdForPath).join(' / ');
+      return `<div class="move-option${isCurrent ? ' move-option-current' : ''}" data-pid="${esc(d.id)}">
+        <span class="move-option-icon">${TreeUtils.isFolder(d) ? ICON_FOLDER : ICON_DOC}</span> ${esc(title)}${path ? `<span class="move-option-path">${esc(path)}</span>` : ''}
       </div>`;
     }).join('')}`;
 
@@ -2678,11 +3084,11 @@ function initSidebarResize(shell) {
   // Keep the sidebar from swallowing the editor on narrow windows
   const clamp = (w) => Math.round(Math.min(SB_MAX_W, Math.max(SB_MIN_W, Math.min(w, window.innerWidth * 0.6))));
   const apply = (w) => document.documentElement.style.setProperty('--sb-user-w', w + 'px');
-  const save = (w) => { try { localStorage.setItem('sidebar-width', String(w)); } catch (_) {} };
+  const save = (w) => lsSet('sidebar-width', String(w));
   const currentW = () => document.getElementById('sidebar').getBoundingClientRect().width;
 
   // Restore saved width
-  const saved = parseInt(localStorage.getItem('sidebar-width'), 10);
+  const saved = parseInt(lsGet('sidebar-width'), 10);
   if (Number.isFinite(saved)) apply(clamp(saved));
 
   let startX = 0, startW = 0;
@@ -2733,9 +3139,15 @@ function initSidebarResize(shell) {
   });
 }
 
+// C-5 (v3.28.0): initSidebar() runs on every boot (each sign-in). Everything that
+// attaches a listener now lives in wireSidebarOnce(); initSidebar() keeps only
+// the per-boot work (restore state, initial load), so repeated sign-ins no
+// longer double every handler.
+let _sidebarWired = false;
+
 function initSidebar() {
   // Restore collapsed state
-  const savedState = localStorage.getItem('sidebar-state');
+  const savedState = lsGet('sidebar-state');
   const shell = document.getElementById('app-shell');
   if (!shell) return;
 
@@ -2744,6 +3156,28 @@ function initSidebar() {
     shell.classList.add('sidebar-collapsed');
   }
 
+  document.querySelectorAll('.sb-sort-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.sort === _sidebarSort);
+  });
+
+  if (!_sidebarWired) {
+    _sidebarWired = true;
+    wireSidebarOnce(shell);
+  }
+
+  // Initial doc list load (stale-while-revalidate)
+  const serverFetch = loadSidebarDocs();
+  loadSidebarDocs({ source: 'cache' }).then(docs => {
+    _sidebarDocs = docs;
+    renderSidebarTree(docs, _sidebarFilter);
+  }).catch(() => {});
+  serverFetch.then(docs => {
+    _sidebarDocs = docs;
+    renderSidebarTree(docs, _sidebarFilter);
+  }).catch(err => console.warn('sidebar initial load failed:', err));
+}
+
+function wireSidebarOnce(shell) {
   initSidebarResize(shell);
 
   // Toggle button in header bar
@@ -2769,11 +3203,9 @@ function initSidebar() {
 
   // Sort toggle
   document.querySelectorAll('.sb-sort-btn').forEach(btn => {
-    if (btn.dataset.sort === _sidebarSort) btn.classList.add('active');
-    else btn.classList.remove('active');
     btn.addEventListener('click', () => {
       _sidebarSort = btn.dataset.sort;
-      localStorage.setItem('sidebar-sort', _sidebarSort);
+      lsSet('sidebar-sort', _sidebarSort);
       document.querySelectorAll('.sb-sort-btn').forEach(b =>
         b.classList.toggle('active', b.dataset.sort === _sidebarSort)
       );
@@ -2784,20 +3216,7 @@ function initSidebar() {
   // New doc button (root-level)
   const newBtn = document.getElementById('sidebar-new-btn');
   if (newBtn) {
-    newBtn.addEventListener('click', () => {
-      if (isDirty && !confirm('You have unsaved changes. Create a new document anyway?')) return;
-      clearTimeout(autoSaveTimer);
-      currentDocIsNew = true;
-      currentDocId = null;
-      currentParentId = null;
-      isDirty = false;
-      editor.value = '';
-      setTitle('New Document');
-      renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
-      updateSidebarActive();
-      editor.focus();
-      if (window.innerWidth <= 600) closeSidebar();
-    });
+    newBtn.addEventListener('click', startNewRootDoc);
   }
 
   // Browse all button
@@ -2817,17 +3236,6 @@ function initSidebar() {
       toggleSidebar();
     }
   });
-
-  // Initial doc list load (stale-while-revalidate)
-  const serverFetch = fsGetAll(300);
-  fsGetAll(300, { source: 'cache' }).then(docs => {
-    _sidebarDocs = docs;
-    renderSidebarTree(docs, _sidebarFilter);
-  }).catch(() => {});
-  serverFetch.then(docs => {
-    _sidebarDocs = docs;
-    renderSidebarTree(docs, _sidebarFilter);
-  }).catch(err => console.warn('sidebar initial load failed:', err));
 }
 
 function isSidebarCollapsed() {
@@ -2844,7 +3252,7 @@ function openSidebar() {
   } else {
     shell.classList.remove('sidebar-collapsed');
   }
-  localStorage.setItem('sidebar-state', 'open');
+  lsSet('sidebar-state', 'open');
 }
 
 function closeSidebar() {
@@ -2855,10 +3263,586 @@ function closeSidebar() {
   } else {
     shell.classList.add('sidebar-collapsed');
   }
-  localStorage.setItem('sidebar-state', 'closed');
+  lsSet('sidebar-state', 'closed');
 }
 
 function toggleSidebar() {
   if (isSidebarCollapsed()) openSidebar();
   else closeSidebar();
 }
+
+// ── Folders, context menu and command palette (v3.27.0) ───────────────────────
+// Pure helpers live in tree-utils.js (window.TreeUtils) so they can be unit
+// tested. Everything here touches the DOM or Firestore.
+
+// Reset the editor to an empty, unsaved document. Always clears currentParentId
+// unless a parent is given, so a new document never inherits the previous
+// document's parent by accident.
+function startBlankDoc(parentId) {
+  clearTimeout(autoSaveTimer);
+  currentDocIsNew = true;
+  currentDocId = null;
+  currentParentId = parentId || null;
+  isDirty = false;
+  editor.value = '';
+  setTitle('New Document');
+  renderPreview(); updateStats(); updateCursor(); updateLineNumbers();
+  document.getElementById('drive-delete-btn').style.display = 'none';
+  updateSidebarActive();
+}
+
+function startNewRootDoc() {
+  if (isDirty && !confirm('You have unsaved changes. Create a new document anyway?')) return;
+  startBlankDoc(null);
+  editor.focus();
+  if (window.innerWidth <= 600) closeSidebar();
+}
+
+// Called on sign-out so the next account never sees the previous account's
+// titles in the sidebar, the context menu or the palette.
+function resetSidebarState() {
+  _sidebarDocs = [];
+  _sidebarFilter = '';
+  const list = document.getElementById('sidebar-list');
+  if (list) list.innerHTML = '';
+  const search = document.getElementById('sidebar-search');
+  if (search) search.value = '';
+  closeContextMenu();
+  closePalette(false);
+}
+
+function toggleFolder(id) {
+  if (_sidebarExpanded.has(id)) _sidebarExpanded.delete(id);
+  else _sidebarExpanded.add(id);
+  _saveExpandedState();
+  renderSidebarTree(_sidebarDocs, _sidebarFilter);
+}
+
+// Expand every ancestor of a document or folder, leave search / Name sort so
+// the tree is visible, open the sidebar if it is collapsed, and scroll to it.
+function revealInSidebar(id) {
+  const byId = new Map(_sidebarDocs.map(d => [d.id, d]));
+  const target = byId.get(id);
+  let cur = target;
+  let guard = 0;
+  while (cur && cur.parentId && guard++ < 50) {
+    _sidebarExpanded.add(cur.parentId);
+    cur = byId.get(cur.parentId);
+  }
+  if (target && TreeUtils.isFolder(target)) _sidebarExpanded.add(id);
+  _saveExpandedState();
+
+  _sidebarFilter = '';
+  const search = document.getElementById('sidebar-search');
+  if (search) search.value = '';
+  if (_sidebarSort !== 'groups') {
+    _sidebarSort = 'groups';
+    lsSet('sidebar-sort', 'groups');
+    document.querySelectorAll('.sb-sort-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.sort === 'groups')
+    );
+  }
+  if (isSidebarCollapsed()) openSidebar();
+  renderSidebarTree(_sidebarDocs, '');
+  const row = document.querySelector(`#sidebar-list .sidebar-item[data-id="${CSS.escape(id)}"]`);
+  if (row) row.scrollIntoView({ block: 'nearest' });
+}
+
+// Create a folder (Finder style: it appears with a default name already in
+// rename mode).
+async function createFolder(parentId) {
+  if (!auth.currentUser) return;
+  const siblingNames = _sidebarDocs
+    .filter(d => TreeUtils.isFolder(d) && (d.parentId || null) === (parentId || null))
+    .map(d => d.title || '');
+  const name = TreeUtils.uniqueName('New Folder', siblingNames);
+  const id = crypto.randomUUID();
+  try {
+    await fsCreateFolder(id, name, parentId || null);
+  } catch (err) {
+    console.error('createFolder:', err);
+    showToast('Could not create folder');
+    return;
+  }
+  const nowMs = Date.now();
+  _sidebarDocs.unshift({
+    id, userId: auth.currentUser.uid, title: name, content: '', type: 'folder',
+    parentId: parentId || undefined, createdAt: nowMs, updatedAt: nowMs,
+  });
+  if (parentId) _sidebarExpanded.add(parentId);
+  revealInSidebar(id);
+  startInlineRename(id);
+}
+
+// Rename in place in the sidebar. Enter or blur commits, Escape cancels.
+function startInlineRename(id) {
+  const doc = _sidebarDocs.find(d => d.id === id);
+  const row = document.querySelector(`#sidebar-list .sidebar-item[data-id="${CSS.escape(id)}"]`);
+  if (!doc || !row) return;
+  const titleEl = row.querySelector('.sidebar-item-title');
+  if (!titleEl) return;
+
+  const folder = TreeUtils.isFolder(doc);
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'sb-rename-input';
+  input.setAttribute('aria-label', folder ? 'Folder name' : 'Document name');
+  input.spellcheck = false;
+  input.value = folder ? (doc.title || '') : (doc.title || '').replace(/\.md$/i, '');
+  titleEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let finished = false;
+  const finish = async (commit) => {
+    if (finished) return;
+    finished = true;
+    const redraw = () => renderSidebarTree(_sidebarDocs, _sidebarFilter);
+    if (!commit) { redraw(); return; }
+
+    const name = TreeUtils.normalizeName(input.value);
+    if (!name) { redraw(); return; }
+    const newTitle = folder ? name : (/\.(md|txt)$/i.test(name) ? name : name + '.md');
+    if (newTitle === doc.title) { redraw(); return; }
+
+    if (folder) {
+      const siblings = _sidebarDocs
+        .filter(d => d.id !== id && TreeUtils.isFolder(d) && (d.parentId || null) === (doc.parentId || null))
+        .map(d => d.title || '');
+      if (TreeUtils.nameTaken(newTitle, siblings)) {
+        showToast('A folder with that name already exists here');
+        redraw();
+        return;
+      }
+    }
+    try {
+      await fsRename(id, newTitle);
+      doc.title = newTitle;
+      doc.updatedAt = Date.now();
+      if (id === currentDocId) setTitle(newTitle);
+    } catch (err) {
+      console.error('rename failed:', err);
+      showToast('Rename failed');
+    }
+    redraw();
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('click', (e) => e.stopPropagation());
+}
+
+// Move a document, or a folder with everything inside it, to Trash.
+async function trashItem(id) {
+  const doc = _sidebarDocs.find(d => d.id === id);
+  if (!doc) return;
+  const folder = TreeUtils.isFolder(doc);
+  const ids = folder ? TreeUtils.subtreeIds(id, _sidebarDocs) : [id];
+  const label = (doc.title || 'Untitled').replace(/\.md$/i, '');
+  if (folder && ids.length > 1 &&
+      !confirm(`Move "${label}" and its ${ids.length - 1} item${ids.length - 1 !== 1 ? 's' : ''} to Trash?`)) return;
+
+  // Never lose unsaved edits to a document that is about to be trashed.
+  const openInside = !!currentDocId && ids.includes(currentDocId);
+  if (openInside && isDirty) {
+    clearTimeout(autoSaveTimer);
+    await performSave(true);
+  }
+  try {
+    if (folder) await fsTrashMany(ids, id);
+    else await fsTrashDoc(id);
+  } catch (err) {
+    console.error('trashItem:', err);
+    showToast('Move to Trash failed');
+    return;
+  }
+  _sidebarDocs = _sidebarDocs.filter(d => !ids.includes(d.id));
+  if (openInside) startBlankDoc(null);
+  renderSidebarTree(_sidebarDocs, _sidebarFilter);
+  updateSidebarActive();
+  showToast(`"${label}" moved to Trash`, 6000, {
+    label: 'Undo',
+    fn: async () => {
+      try {
+        if (ids.length > 1) await fsRestoreMany(ids);
+        else await fsRestoreDoc(id);
+        await refreshSidebarList();
+      } catch (err) {
+        console.error('undo trash:', err);
+        showToast('Undo failed');
+      }
+    },
+  });
+}
+
+// Duplicate any document from the sidebar (keeps parent and tags). Unlike the
+// toolbar Duplicate it does not switch the editor to the copy.
+async function duplicateDocById(id) {
+  if (!auth.currentUser) return;
+  try {
+    if (id === currentDocId && isDirty) { clearTimeout(autoSaveTimer); await performSave(true); }
+    const src = await fsGet(id);
+    if (!src || src.type === 'folder') return;
+    const newId = crypto.randomUUID();
+    const base = (src.title || 'untitled').replace(/\.(md|txt)$/i, '');
+    const newTitle = base + ' copy.md';
+    await fsPut(newId, newTitle, src.content || '', true, src.parentId || null);
+    if (Array.isArray(src.tags) && src.tags.length) await fsUpdateTags(newId, src.tags);
+    const nowMs = Date.now();
+    _sidebarDocs.unshift({
+      id: newId, userId: auth.currentUser.uid, title: newTitle, content: src.content || '',
+      parentId: src.parentId || undefined, tags: src.tags || undefined, createdAt: nowMs, updatedAt: nowMs,
+    });
+    renderSidebarTree(_sidebarDocs, _sidebarFilter);
+    showToast(`Duplicated as "${newTitle}"`);
+  } catch (err) {
+    console.error('duplicateDocById:', err);
+    showToast('Duplicate failed');
+  }
+}
+
+// ── Context menu ──────────────────────────────────────────────────────────────
+let _ctxMenuEl = null;
+let _ctxTargetRow = null;
+let _ctxCleanup = null;
+
+function closeContextMenu() {
+  if (_ctxCleanup) { _ctxCleanup(); _ctxCleanup = null; }
+  if (_ctxMenuEl) { _ctxMenuEl.remove(); _ctxMenuEl = null; }
+  if (_ctxTargetRow) { _ctxTargetRow.classList.remove('ctx-target'); _ctxTargetRow = null; }
+}
+
+// items: [{ label, action, danger?, disabled? } | { separator: true }]
+function openContextMenu(x, y, items, targetRow) {
+  closeContextMenu();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.setAttribute('role', 'menu');
+  const buttons = [];
+  items.forEach((it) => {
+    if (it.separator) {
+      const sep = document.createElement('div');
+      sep.className = 'ctx-sep';
+      sep.setAttribute('role', 'separator');
+      menu.appendChild(sep);
+      return;
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ctx-item' + (it.danger ? ' ctx-danger' : '');
+    b.setAttribute('role', 'menuitem');
+    b.textContent = it.label;
+    if (it.disabled) b.disabled = true;
+    b.addEventListener('click', () => { closeContextMenu(); it.action(); });
+    menu.appendChild(b);
+    buttons.push(b);
+  });
+  document.body.appendChild(menu);
+  const pos = TreeUtils.clampMenu(x, y, menu.offsetWidth, menu.offsetHeight, window.innerWidth, window.innerHeight);
+  menu.style.left = pos.left + 'px';
+  menu.style.top = pos.top + 'px';
+  _ctxMenuEl = menu;
+  if (targetRow) { targetRow.classList.add('ctx-target'); _ctxTargetRow = targetRow; }
+
+  const enabled = () => buttons.filter(b => !b.disabled);
+  if (enabled()[0]) enabled()[0].focus();
+
+  const onKey = (e) => {
+    const list = enabled();
+    if (!list.length) return;
+    const i = list.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); list[(i + 1) % list.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); list[(i - 1 + list.length) % list.length].focus(); }
+    else if (e.key === 'Home') { e.preventDefault(); list[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); list[list.length - 1].focus(); }
+    else if (e.key === 'Escape' || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); closeContextMenu(); }
+  };
+  const onDown = (e) => { if (!menu.contains(e.target)) closeContextMenu(); };
+  const onClose = () => closeContextMenu();
+  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('pointerdown', onDown, true);
+  document.addEventListener('scroll', onClose, true);
+  window.addEventListener('blur', onClose);
+  window.addEventListener('resize', onClose);
+  _ctxCleanup = () => {
+    document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('pointerdown', onDown, true);
+    document.removeEventListener('scroll', onClose, true);
+    window.removeEventListener('blur', onClose);
+    window.removeEventListener('resize', onClose);
+  };
+}
+
+function sidebarMenuItems(id) {
+  const doc = id ? _sidebarDocs.find(d => d.id === id) : null;
+  if (!doc) {
+    return [
+      { label: 'New document', action: startNewRootDoc },
+      { label: 'New folder', action: () => createFolder(null) },
+    ];
+  }
+  if (TreeUtils.isFolder(doc)) {
+    return [
+      { label: _sidebarExpanded.has(id) ? 'Collapse' : 'Expand', action: () => toggleFolder(id) },
+      { separator: true },
+      { label: 'New document here', action: () => addSubPage(id) },
+      { label: 'New subfolder', action: () => createFolder(id) },
+      { separator: true },
+      { label: 'Rename', action: () => startInlineRename(id) },
+      { label: 'Move to…', action: () => openMoveModal(id) },
+      { separator: true },
+      { label: 'Move to Trash', danger: true, action: () => trashItem(id) },
+    ];
+  }
+  return [
+    { label: 'Open', action: () => loadDoc(id) },
+    { separator: true },
+    { label: 'New sub-page', action: () => addSubPage(id) },
+    { label: 'Rename', action: () => startInlineRename(id) },
+    { label: 'Move to…', action: () => openMoveModal(id) },
+    { label: 'Duplicate', action: () => duplicateDocById(id) },
+    { separator: true },
+    { label: 'Move to Trash', danger: true, action: () => trashItem(id) },
+  ];
+}
+
+(function initSidebarContextMenu() {
+  const list = document.getElementById('sidebar-list');
+  if (!list) return;
+  const openFor = (target, x, y) => {
+    const row = target.closest ? target.closest('.sidebar-item') : null;
+    openContextMenu(x, y, sidebarMenuItems(row ? row.dataset.id : null), row);
+  };
+
+  list.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.sb-rename-input')) return; // keep the native menu in the rename box
+    e.preventDefault();
+    openFor(e.target, e.clientX, e.clientY);
+  });
+
+  // Touch long-press: iOS Safari does not fire contextmenu.
+  let timer = null;
+  let sx = 0;
+  let sy = 0;
+  let fired = false;
+  const cancel = () => clearTimeout(timer);
+  list.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'touch') return;
+    sx = e.clientX; sy = e.clientY; fired = false;
+    cancel();
+    const target = e.target;
+    timer = setTimeout(() => { fired = true; openFor(target, sx, sy); }, 550);
+  });
+  list.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'touch' && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel();
+  });
+  list.addEventListener('pointerup', cancel);
+  list.addEventListener('pointercancel', cancel);
+  // Swallow the click that follows a long-press so it does not also open the row.
+  list.addEventListener('click', (e) => {
+    if (fired) { fired = false; e.stopPropagation(); e.preventDefault(); }
+  }, true);
+})();
+
+document.getElementById('sidebar-new-folder-btn')?.addEventListener('click', () => createFolder(null));
+document.getElementById('sidebar-palette-btn')?.addEventListener('click', () => openPalette());
+
+// ── Command palette (Ctrl/Cmd+K) ──────────────────────────────────────────────
+const paletteModal = document.getElementById('palette-modal');
+const paletteInput = document.getElementById('palette-input');
+const paletteList  = document.getElementById('palette-list');
+let _paletteRows = [];          // selectable rows: { el, run }
+let _paletteSel = 0;
+let _paletteReturnFocus = null;
+
+function paletteCommands() {
+  const clickId = (id) => () => { const el = document.getElementById(id); if (el) el.click(); };
+  const hasDoc = () => !!currentDocId;
+  return [
+    { label: 'New document', hint: 'Ctrl/Cmd+N', keywords: 'create file', run: clickId('new-btn') },
+    { label: 'New folder', keywords: 'create directory', run: () => createFolder(null) },
+    { label: 'Open document browser', hint: 'Ctrl/Cmd+O', keywords: 'browse all files library open', run: openDocBrowser },
+    { label: 'Save now', hint: 'Ctrl/Cmd+S', run: () => performSave(false) },
+    { label: 'Rename current document', keywords: 'title', run: startRename },
+    { label: 'Duplicate current document', keywords: 'copy', run: duplicateCurrentDoc, when: hasDoc },
+    { label: 'Move current document to…', keywords: 'folder parent', run: () => openMoveModal(currentDocId), when: hasDoc },
+    { label: 'Move current document to Trash', keywords: 'delete remove', run: deleteCurrentDoc, when: hasDoc },
+    { label: 'Open Trash', keywords: 'deleted restore', run: openTrashModal },
+    { label: 'Open Kanban board', keywords: 'tasks', run: openKanban },
+    { label: 'Find and replace', hint: 'Ctrl/Cmd+F', keywords: 'search', run: openFindBar },
+    { label: 'Toggle sidebar', hint: 'Ctrl/Cmd+\\', run: toggleSidebar },
+    { label: 'Toggle focus mode', hint: 'F11', keywords: 'distraction free', run: toggleFocusMode },
+    { label: 'Switch theme', keywords: 'dark light lokai appearance', run: clickId('theme-toggle-btn') },
+    { label: 'View: editor only', run: clickId('view-edit-btn') },
+    { label: 'View: split', run: clickId('view-split-btn') },
+    { label: 'View: preview only', run: clickId('view-preview-btn') },
+    { label: 'Zoom preview in', hint: 'Ctrl/Cmd+=', run: clickId('zoom-in-btn') },
+    { label: 'Zoom preview out', hint: 'Ctrl/Cmd+-', run: clickId('zoom-out-btn') },
+    { label: 'Reset preview zoom', hint: 'Ctrl/Cmd+0', run: clickId('zoom-reset-btn') },
+    { label: 'Import files', keywords: 'upload markdown', run: clickId('hdr-import-btn') },
+    { label: 'Export as Markdown (.md)', keywords: 'download', run: exportAsMd },
+    { label: 'Export as text (.txt)', keywords: 'download', run: exportAsTxt },
+    { label: 'Export as HTML', keywords: 'download', run: exportAsHtml },
+    { label: 'Export as PDF', keywords: 'download print', run: exportAsPdf },
+    { label: 'Export as Word (.docx)', keywords: 'download', run: exportAsDocx },
+    { label: 'Export as RTF', keywords: 'download', run: exportAsRtf },
+    { label: 'Sign out', keywords: 'log out', run: clickId('signout-btn') },
+  ].filter(c => !c.when || c.when());
+}
+
+function paletteDocs() {
+  const byId = new Map(_sidebarDocs.map(d => [d.id, d]));
+  return _sidebarDocs.map(d => ({
+    id: d.id,
+    folder: TreeUtils.isFolder(d),
+    title: (d.title || 'Untitled').replace(/\.md$/i, ''),
+    path: TreeUtils.ancestorTitles(d.id, byId).join(' / '),
+  }));
+}
+
+function renderPalette() {
+  const raw = paletteInput.value.trimStart();
+  const commandsOnly = raw.startsWith('>');
+  const q = (commandsOnly ? raw.slice(1) : raw).trim();
+  const cmds = paletteCommands();
+  const docs = commandsOnly ? [] : paletteDocs();
+
+  const sections = [];
+  if (!q) {
+    if (!commandsOnly) {
+      const recent = docs.filter(d => !d.folder).slice(0, 6);
+      if (recent.length) sections.push({ title: 'Recent documents', items: recent, kind: 'doc' });
+    }
+    sections.push({ title: 'Commands', items: cmds, kind: 'cmd' });
+  } else {
+    const cmdHits = TreeUtils.rank(q, cmds, c => [c.label, c.keywords || ''], 12);
+    const docHits = TreeUtils.rank(q, docs, d => [d.title, d.path], 12);
+    const top = (items, texts) => items.length
+      ? Math.max(...texts(items[0]).map(t => TreeUtils.fuzzyScore(q, t))) : -1;
+    const cmdSection = cmdHits.length ? { title: 'Commands', items: cmdHits, kind: 'cmd' } : null;
+    const docSection = docHits.length ? { title: 'Documents', items: docHits, kind: 'doc' } : null;
+    const docsFirst = top(docHits, d => [d.title, d.path]) >= top(cmdHits, c => [c.label, c.keywords || '']);
+    (docsFirst ? [docSection, cmdSection] : [cmdSection, docSection]).forEach(s => { if (s) sections.push(s); });
+  }
+
+  paletteList.textContent = '';
+  _paletteRows = [];
+  if (!sections.length) {
+    const empty = document.createElement('div');
+    empty.className = 'palette-empty';
+    empty.textContent = 'No matching commands or documents';
+    paletteList.appendChild(empty);
+    paletteInput.removeAttribute('aria-activedescendant');
+    return;
+  }
+
+  sections.forEach((section) => {
+    const head = document.createElement('div');
+    head.className = 'palette-section';
+    head.textContent = section.title;
+    paletteList.appendChild(head);
+    section.items.forEach((item) => {
+      const idx = _paletteRows.length;
+      const el = document.createElement('div');
+      el.className = 'palette-item';
+      el.id = 'palette-opt-' + idx;
+      el.setAttribute('role', 'option');
+
+      const icon = document.createElement('span');
+      icon.className = 'palette-icon';
+      let run;
+      let label;
+      let meta = '';
+      if (section.kind === 'doc') {
+        icon.innerHTML = item.folder ? ICON_FOLDER : ICON_DOC; // static, trusted SVG
+        label = item.title;
+        meta = item.path;
+        run = () => { if (item.folder) revealInSidebar(item.id); else loadDoc(item.id); };
+      } else {
+        icon.textContent = '›';
+        label = item.label;
+        meta = item.hint || '';
+        run = item.run;
+      }
+      const labelEl = document.createElement('span');
+      labelEl.className = 'palette-label';
+      labelEl.textContent = label;
+      const metaEl = document.createElement('span');
+      metaEl.className = 'palette-meta';
+      metaEl.textContent = meta;
+      el.append(icon, labelEl, metaEl);
+
+      el.addEventListener('mousemove', () => { if (_paletteSel !== idx) setPaletteSel(idx); });
+      el.addEventListener('click', () => { _paletteSel = idx; runPaletteSel(); });
+      paletteList.appendChild(el);
+      _paletteRows.push({ el, run });
+    });
+  });
+  setPaletteSel(Math.min(_paletteSel, _paletteRows.length - 1));
+}
+
+function setPaletteSel(i) {
+  if (!_paletteRows.length) return;
+  _paletteSel = (i + _paletteRows.length) % _paletteRows.length;
+  _paletteRows.forEach((r, n) => {
+    r.el.classList.toggle('selected', n === _paletteSel);
+    r.el.setAttribute('aria-selected', n === _paletteSel ? 'true' : 'false');
+  });
+  const cur = _paletteRows[_paletteSel].el;
+  paletteInput.setAttribute('aria-activedescendant', cur.id);
+  cur.scrollIntoView({ block: 'nearest' });
+}
+
+function runPaletteSel() {
+  const row = _paletteRows[_paletteSel];
+  if (!row) return;
+  closePalette(false);
+  row.run();
+}
+
+function openPalette() {
+  if (!auth.currentUser || !paletteModal) return;
+  closeContextMenu();
+  _paletteReturnFocus = document.activeElement;
+  paletteInput.value = '';
+  _paletteSel = 0;
+  renderPalette();
+  paletteModal.classList.add('open');
+  paletteInput.focus();
+}
+
+function closePalette(restoreFocus) {
+  if (!paletteModal || !paletteModal.classList.contains('open')) return;
+  paletteModal.classList.remove('open');
+  if (restoreFocus && _paletteReturnFocus && document.contains(_paletteReturnFocus)) {
+    _paletteReturnFocus.focus();
+  }
+  _paletteReturnFocus = null;
+}
+
+function togglePalette() {
+  if (paletteModal && paletteModal.classList.contains('open')) closePalette(true);
+  else openPalette();
+}
+
+if (paletteModal && paletteInput) {
+  paletteInput.addEventListener('input', () => { _paletteSel = 0; renderPalette(); });
+  paletteInput.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setPaletteSel(_paletteSel + 1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setPaletteSel(_paletteSel - 1); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPaletteSel(); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePalette(true); }
+  });
+  paletteModal.addEventListener('mousedown', (e) => { if (e.target === paletteModal) closePalette(true); });
+}
+
+// Capture phase so it works wherever focus is (editor, preview, inputs).
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    togglePalette();
+  }
+}, true);

@@ -466,3 +466,268 @@ post-deploy check is still manual.
   deploy` uploads what is on disk, and git showing "nothing to commit" is
   not proof the deployed version is current.
 - [ ] SW cache is `em-dash-md-v10` (supersedes the v9 check above).
+
+## Log: 2026-10-12: v3.27.0 folders, context menu, command palette
+
+**OpenSpec**: Purpose: Finder-like organisation of Firestore documents.
+Scope: real folders (`type:'folder'` docs), sidebar right-click menu, Ctrl/Cmd+K
+palette. Inputs: existing `documents` collection, `parentId`. Outputs: folder
+docs (empty content), `trashedBy` on descendants of a trashed folder.
+Constraints: no rules, index, CSP or hosting change (so not High Risk, no CAB);
+no build step; no extra collection reads. Acceptance: tests below.
+
+**Audit (full, touches data handling paths)**: folders excluded from
+loadMostRecent, Kanban pick, dedup script; C-4 (new doc inheriting parent)
+fixed; sign-out resets sidebar state; hostile names rendered via esc() and
+textContent. Residual: folder tree limited to the 300-doc sidebar window;
+`firestore_autotag.py`, `firestore_strip_hash.py`, `firestore_bulk_import.py`
+not re-reviewed for `type:'folder'`.
+
+**QA (executed)**: `node tests/tree-utils.test.cjs` 20/20; `node
+tests/e2e-folders.cjs` 74/74 in headless Chromium against an in-memory
+Firebase stub (not the live Firestore); `node --check` app.js, sw.js,
+tree-utils.js clean; no duplicate function names. Gate: not applicable (web
+app, not an unattended script).
+
+**Findings fixed during QA**: doc browser folder click showed an unsaved-changes
+prompt even though folders never replace the editor (now skipped).
+
+**Checks added**
+- [ ] `node tests/tree-utils.test.cjs` and `node tests/e2e-folders.cjs` pass.
+- [ ] `firestore_dedup.py` skips `type == 'folder'` (two same-named empty
+  folders must never be treated as duplicates).
+- [ ] `window.TreeUtils` defined; console has no CSP or load error for
+  `tree-utils.js`.
+- [ ] SW cache is `em-dash-md-v16` and precaches `/tree-utils.js` (supersedes
+  v15 checks).
+- [ ] Any script that lists documents must handle `type:'folder'` (empty
+  content, no .md meaning).
+- [ ] Post deploy click-through: create folder, rename, move a doc in,
+  right-click menu, trash folder then Undo, Trash restore, Ctrl/Cmd+K.
+- [ ] Still open: C-1, C-2, C-3, C-5, C-6 and Sep 27 security items.
+
+## Log: 2026-10-12: v3.28.0 Phase 0 (C-1 to C-5)
+
+**OpenSpec**: Purpose: remove read amplification and data-loss paths found in
+the 2026-10-12 review, with no schema, rules, index, CSP or hosting change
+(Medium risk, no CAB). Scope: C-1 reads, C-2 window, C-3 autosave coverage,
+C-4 parent leak (already shipped and tested in v3.27.0), C-5 idempotent boot.
+Acceptance: S13 checks in tests/e2e-folders.cjs; the same checks must FAIL on
+the v3.27.0 app.js (verified).
+
+**Changes**
+- C-1: `performSave` patches `_sidebarDocs` locally (`syncSidebarAfterSave`),
+  zero queries per save. Trash uses `where isDeleted == true` (equality only,
+  no composite index). Kanban uses `kanbanStatus in [...]`. Both fall back to
+  the old full read if the query is rejected.
+- C-2 (Phase 0 scope only): `fsGetAll` pages past trashed documents until the
+  window is full; `fillMissingAncestors` fetches parents outside the window
+  (max 40 single reads per load, skipped for the cache paint).
+- C-3: autosave scheduled from Focus Mode input and exit, Replace All and
+  Replace.
+- C-5: listeners moved to `wireSidebarOnce`, `_mobileUiWired` guard; per boot
+  work stays in `initSidebar`.
+- Also: `isDirty` cleared only if the editor still equals the saved content
+  (part of C-7); `loadMostRecent` reads 10 not 5.
+
+**Audit (full: touches data access paths)**: read counts only fall; no write
+shape changed; folders and Trash grouping unaffected (trashedBy docs are still
+isDeleted == true). Not fixed, by design: search and the doc browser still see
+only the newest 300 live documents (needs the Phase 1 docIndex); Trash still
+sorts client-side.
+
+**QA (executed)**: `node tests/e2e-folders.cjs` 90/90 against the in-memory
+stub (stub now supports `in` and `startAfter`); S13 fails 5+ checks on the
+old app.js and passes on the new one; `node tests/tree-utils.test.cjs` 20/20;
+`node --check app.js`. Gate: not applicable (web app). NOT run against live
+Firestore: the two new query shapes are the one thing only a deploy proves.
+
+**Checks added**
+- [ ] After deploy, DevTools console: opening Trash and Kanban logs no
+  "query failed, falling back" warning (that warning means a new index or
+  rules problem; the app still works via the fallback).
+- [ ] Network tab: typing in a doc for 10 seconds triggers writes but no
+  `runQuery`/`Listen` calls from autosave.
+- [ ] Focus Mode: type, wait 3 seconds, reload: text is saved. Replace All:
+  same.
+- [ ] Sign out and in twice, then press Ctrl+\ once: sidebar toggles once.
+- [ ] Trash 5 documents, reload: sidebar still lists a full window of live
+  documents.
+- [ ] SW cache is `em-dash-md-v17`; footer shows v3.28.0.
+- [ ] Still open: C-6 to C-14, Phase 1 docIndex, Sep 27 security items.
+
+## Log: 2026-10-12: v3.29.0 Medium findings C-6 to C-14
+
+**OpenSpec**: Purpose: close the Medium findings of the 2026-10-12 review.
+Scope: app.js, sw.js, package.json (scripts and dev dependencies only),
+tests. No rules, index, CSP or hosting change (so no CAB). Acceptance: the
+checks in tests/e2e-medium.cjs, tests/sw.test.cjs and the round-trip test;
+C-6 and the C-7 queue check must FAIL on the v3.28.0 app.js (verified).
+
+**Changes**
+- C-6: `lsGet/lsSet/lsGetJson` everywhere; corrupt values validated; app boots
+  with storage blocked.
+- C-7: saves are queued (`_saveChain`); `isDirty` cleared only if the editor
+  still equals the saved text; updates run in a transaction and are refused
+  when the stored body differs from both the last loaded/saved body and the
+  new body (`edmd/conflict`); autosave pauses with a "Load their version"
+  toast, manual Ctrl+S asks before overwriting. Offline (`unavailable`) falls
+  back to the plain queued update. Not done: live `onSnapshot` on the open doc.
+- C-8: Mermaid `strict`, SVG through DOMPurify (svg + html profiles,
+  foreignObject allowed), cached by source (50 entries).
+- C-9: sign-out empties the sidebar, doc browser, board, trash and move lists,
+  then `terminate()`, `clearPersistence()` and reload. Account deletion does
+  the same.
+- C-10: exports use `exportBodyHtml()` (no copy buttons, wrappers or
+  contenteditable); RTF tables are real tables.
+- C-11: list continuation, Replace All and leaving Focus Mode go through
+  `execCommand('insertText')` so Ctrl+Z works (assignment fallback).
+- C-12: `npm test` scripts and dev dependencies added; round-trip test renamed
+  to `.cjs`; lockfile regenerated.
+- C-13: password accounts get a verification email and an explanation; the app
+  does not boot until the address is verified. Google sign-in unaffected.
+- C-14: same-origin files are network-first with `cache: no-cache`; Firebase
+  SDK and Mermaid precached; gstatic allowed in the runtime cache. Cache v18.
+
+**Audit (full: auth, data access and shared dependency files touched)**:
+- Behaviour change to know: signing out now reloads the page.
+- Behaviour change: unverified password sign-in no longer reaches the app.
+- Conflict check is content-based, so a stale list entry cannot cause a false
+  conflict unless the body really changed. Duplicate and Undo-delete reset the
+  base text (bug found while testing, fixed).
+- Residual: single-tab sign-out only (another open tab makes
+  `clearPersistence` fail; it is logged and the reload still happens).
+- Residual: pending offline writes at sign-out time are discarded by
+  `clearPersistence`.
+- Residual: `tests/` is inside the Hosting public folder (not in the ignore
+  list in firebase.json). It holds no secrets; adding it to the ignore list is
+  a hosting change (CAB).
+
+**QA (executed)**: `node tests/e2e-medium.cjs` 41/41 (real marked, DOMPurify,
+highlight.js, Turndown and Mermaid, stub Firebase); `node tests/e2e-folders.cjs`
+90/90; `node tests/sw.test.cjs` 9/9; `node tests/tree-utils.test.cjs` 20/20;
+round-trip jest suite 8/8 as `.cjs`; `node --check` on app.js, sw.js and
+tree-utils.js; LibreOffice opened the generated RTF table. Old code fails the
+C-6 and C-7 queue checks and 4 of the sw tests. NOT run: live Firestore
+(transactions, clearPersistence), a real Word, a real second device.
+Gate: not applicable (web app).
+
+**Checks added**
+- [ ] `npm install` then `npm test` passes (needs network; lockfile changed).
+- [ ] Two browsers on one document: edit in A, then edit in B without
+  reloading: B shows "Changed on another device" and does not overwrite.
+- [ ] Offline (DevTools Network offline): typing still saves locally and syncs
+  on reconnect (the transaction falls back to the queued update).
+- [ ] Sign out: the page reloads, DevTools Application shows the Firestore
+  IndexedDB entries gone.
+- [ ] Block site data in the browser and reload: the app still opens.
+- [ ] Export HTML with a code block: no `copy-code-btn`. Export RTF with a
+  table: opens in Word as a table.
+- [ ] Mermaid diagram renders; a hostile label does not run script.
+- [ ] Create an email and password account: the verification mail arrives,
+  the sign-in screen explains, and signing in after the click works.
+- [ ] Offline start (SW installed, DevTools offline): the app shell loads.
+- [ ] SW cache is `em-dash-md-v18`; footer shows v3.29.0.
+- [ ] Still open: Low items, Phase 1 docIndex, Sep 27 security items (rules,
+  CSP, hosting, MCP server).
+
+## Log: 2026-10-12: MCP server decommissioned (High Risk, CAB)
+
+**Finding closed**: 2026-09-27 security review item 1 (MCP server unauthenticated,
+trusts `userId` from the request body, runs as Firebase Admin).
+
+**Evidence gathered before deletion**
+- Service: `mcp-server`, europe-west1, deployed 2026-09-21 by Jay, publicly
+  reachable (`/health` answered 200 with no authentication).
+- 30 day request log (complete; 18 entries): six POSTs to `/mcp`, all from one
+  address (47.12.162.186, 2026-09-21 and 2026-09-22, last 2026-09-22 18:51 UTC);
+  GET-only requests from other addresses (health checks and 404s, no data
+  access); none since 2026-09-22. Ownership of 47.12.162.186 still to be
+  confirmed by Jay.
+- Data access: `server.js` authenticates with a key file baked into the image,
+  not the attached service account. That key was deleted on 2026-09-22, so
+  Firestore calls could not succeed. Static reading only; `/mcp` was never
+  called.
+
+**Action taken by Jay (2026-10-12)**: service deleted; Google returns its own
+HTML 404 for `/health` (the app's JSON 404 would mean the service still ran).
+
+**Still to do**
+- [ ] Delete the container image (`gcloud artifacts repositories list --project
+  em-dash-md`); it contains the dead key.
+- [ ] Confirm 47.12.162.186 is Jay's (`curl -s ifconfig.me` from home and work).
+- [ ] Remove `server.js`, `http-wrapper.js`, `start.sh`, `Dockerfile`,
+  `Dockerfile-1`, `Docker.dmg`, the `firebase-admin` dependency and the MCP
+  name and scripts from `package.json` (then regenerate the lockfile).
+- [ ] Keep the `firebase-adminsdk-fbsvc` service account (Firebase needs it).
+
+**Checks added**
+- [ ] `gcloud run services list --project em-dash-md` shows no em-dash MCP
+  service.
+- [ ] No file in the repo creates an unauthenticated endpoint with admin
+  credentials; any future server verifies a Firebase ID token and derives the
+  user id from it.
+
+## Log: 2026-10-12: v3.29.1 diagram pre-sanitizer (found by Jay's Mac test run)
+
+**Finding**: on Chrome 156 (macOS) `tests/e2e-medium.cjs` reported a CSP
+violation (`script-src-attr`, inline) raised inside `mermaid.min.js` while
+rendering a deliberately hostile label (`<img src=x onerror=...>`). Chromium
+141 in the build sandbox did not show it. Cause: Mermaid builds a throwaway
+element from raw label text before its own cleanup, so `securityLevel:
+'strict'` does not stop the handler from being attempted. The CSP blocked it
+and the final SVG was clean, so no script ran, but the CSP was the only
+barrier. The first diagnostics were empty because the page reloads at the end
+of the C-9 step; they now persist across the reload and label the section.
+
+**Fix (scoped re-audit: renderMermaidDiagrams only)**:
+`sanitizeMermaidSource()` removes HTML tags other than attribute-free
+`br b i u s em strong sub sup small` from the diagram text before it is given
+to Mermaid (a removed tag becomes a space so a label never ends up empty,
+which Mermaid rejects). Arrows and `<<interface>>` style annotations are not
+tags and are untouched. The document text and the cache key keep the original.
+Known limit: a diagram label that used `<img>` or `<a>` loses it.
+
+**QA (executed)**: 11 sanitizer cases in Node; e2e-medium 43/43 and
+e2e-folders 90/90 and sw 9/9 in the sandbox. The Chrome 156 result is the
+real test of this fix and is pending (Jay runs `npm run test:e2e`).
+
+**Also fixed**: the C-11 undo tests used Ctrl+Z; macOS needs Cmd+Z (test
+only, the app was correct).
+
+**Checks added**
+- [ ] `npm run test:e2e` on the Mac: the final "no page errors" check passes
+  (no `script-src-attr` violation from mermaid.min.js).
+- [ ] If it still fails, the failure line shows the section and the file; do
+  not loosen the CSP to make it pass.
+- [ ] SW cache is `em-dash-md-v19`; footer shows v3.29.1.
+- [ ] Any future CSP change (adding `unsafe-inline` to `script-src`) must
+  re-run the diagram hostile-label test first.
+
+## 2026-10-12 MCP repo cleanup (CAB review waived by Jay)
+
+**OpenSpec**: remove the decommissioned MCP backend from the repo. Cloud Run
+`mcp-server` was deleted earlier; nothing in the app, tests or scripts uses
+`server.js`, `http-wrapper.js`, `start.sh` or the Dockerfiles (grep checked).
+Reversible: files moved, not deleted. Acceptance: app unchanged, `npm run
+check` and unit tests pass, lockfile has no `firebase-admin`.
+
+**Changes**
+- Moved to `_to_delete/mcp-20261012/`: server.js, http-wrapper.js, start.sh,
+  Dockerfile, Dockerfile-1, Docker.dmg (584 MB), plus the old package.json and
+  package-lock.json as a rollback copy.
+- package.json: name `em-dash-md`, MCP description, main, start and dev
+  scripts, `firebase-admin` dependency and the mcp keyword removed.
+- package-lock.json regenerated; `npm prune` removed firebase-admin from
+  node_modules.
+- Left alone on purpose: firebase.json ignore entries (harmless, hosting
+  change), the four `.patch` files, the `.py` Firestore scripts.
+
+**QA (executed)**: `npm run check` clean, unit 20/20 and sw 9/9. The e2e and
+roundtrip suites were not run here (no browser in this shell); Jay runs
+`npm test`.
+
+**Checks added**
+- [ ] `npm test` on the Mac passes after the cleanup (no code changed).
+- [ ] `rm -r _to_delete` once the rollback copy is no longer wanted.
+- [ ] Git: Dockerfile and server.js show as deleted; stage them with the commit.

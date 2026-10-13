@@ -27,6 +27,9 @@ A cloud-first Markdown editor that lives in your browser. Sign in once and your 
 - **Full-text search** — the document browser searches inside document content and shows a highlighted snippet when the match is in the body rather than the title or tags
 - **Table insert** — toolbar button inserts a Markdown table; the dropdown arrow opens a 5×5 grid picker to choose the exact dimensions
 - **Mermaid diagrams** — fenced code blocks tagged ` ```mermaid ` render as live diagrams in the preview pane
+- **Folders**: create folders in the sidebar and put documents or other folders inside; a new folder opens in rename mode, and folders sort first
+- **Right-click menu**: right-click (or long-press on touch) a sidebar item for Rename, Move to, Duplicate, New sub-page or folder, and Move to Trash; right-click empty space for New document or New folder
+- **Command palette**: Ctrl/Cmd+K opens a fuzzy finder for commands and documents; start with `>` to search commands only
 - **Delete My Account** — permanently delete your account and all documents from within the app, after typed confirmation and re-authentication
 
 ---
@@ -45,6 +48,7 @@ A cloud-first Markdown editor that lives in your browser. Sign in once and your 
 | Zoom in / out | Ctrl/Cmd+= / Ctrl/Cmd+- |
 | Reset zoom | Ctrl/Cmd+0 |
 | Toggle sidebar | Ctrl/Cmd+\ |
+| Command palette | Ctrl/Cmd+K |
 
 ---
 
@@ -119,6 +123,30 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.29.1
+- **Security**: risky HTML in diagram labels is removed before the diagram library sees it (the browser security policy was already blocking it)
+
+### v3.29.0
+- **Fix**: storage access can no longer stop the app from starting (blocked or corrupt browser storage is ignored)
+- **Fix**: saves are queued one at a time, a save no longer marks text typed during it as saved, and saving over a version changed on another device asks first
+- **Security**: diagrams are rendered in strict mode, sanitized and cached
+- **Security**: signing out or deleting the account clears the offline cache and every list on screen, then reloads
+- **Fix**: HTML, PDF and Word exports no longer contain copy buttons, and RTF export keeps tables
+- **Fix**: list continuation, Replace All and leaving Focus Mode keep Ctrl+Z history
+- **Fix**: email and password sign-up sends a verification email and explains the next step
+- **Offline**: Firebase and diagram libraries are cached, and app files are always revalidated
+
+### v3.28.0
+- **Fix (cost)**: saving no longer re-reads 300 documents; the sidebar is updated from memory. Trash and Kanban read only the documents they show
+- **Fix**: trashed documents no longer use up slots in the 300-document sidebar window, and a page whose parent is outside the window keeps its place in the tree
+- **Fix**: edits made in Focus Mode and with Replace All are now auto-saved
+- **Fix**: signing out and back in no longer doubles sidebar and mobile handlers
+
+### v3.27.0
+- **Folders**: real folders in the sidebar (stored as documents with `type: folder`, so no migration or rules change). Move to Trash takes the folder and everything inside it; Restore and Delete permanently from Trash act on the whole folder
+- **Right-click context menu**: sidebar items and empty sidebar space, with keyboard navigation and touch long-press
+- **Command palette**: Ctrl/Cmd+K, fuzzy search across commands and documents
+- **Fix**: a new document no longer inherits the previously open document's parent page
 ### v3.26.0
 - **Sidebar sort toggle** — switch between **Groups** (hierarchical tree) and **Name** (flat A–Z list) using the toggle below the search box; preference persists across sessions
 

@@ -3,7 +3,7 @@
  *
  * Deps are installed in a temp directory by the test runner (see spec item 7).
  * Run with:
- *   node node_modules/.bin/jest preview-roundtrip.test.js --testEnvironment jsdom
+ *   npm run test:roundtrip
  * from the temp directory that has the deps installed.
  */
 

@@ -88,6 +88,7 @@ def all_docs(token):
             "title": sv("title"),
             "content": sv("content"),
             "createdAt": sv("createdAt"),
+            "type": sv("type"),
         })
     return docs
 
@@ -135,6 +136,10 @@ def main():
     # Group by (userId, title, content_hash)
     groups: dict[tuple, list] = {}
     for doc in docs:
+        # Folders (v3.27.0) have empty content, so two same-named folders in
+        # different parents would look like duplicates. Never touch them.
+        if doc["type"] == "folder":
+            continue
         key = (doc["userId"], doc["title"], content_hash(doc["content"]))
         groups.setdefault(key, []).append(doc)
 

@@ -1584,3 +1584,159 @@ body.theme-light .btn-secondary { background: #efefef; }
   line-height: 1.4;
 }
 .auth-link:hover { text-decoration: underline; }
+
+/* ── v3.27.0: folders, context menu, command palette ─────────────────────── */
+.sb-head-actions { display: flex; align-items: center; gap: 2px; }
+.sb-head-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  color: var(--text2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: .6;
+  transition: opacity 120ms, background 120ms;
+}
+.sb-head-btn:hover { opacity: 1; background: var(--bg3); }
+
+.sidebar-item[data-type="folder"] .sb-icon { color: var(--accent); }
+.sidebar-item[data-type="folder"] .sidebar-item-title { font-weight: 500; }
+.sb-empty-folder {
+  font-size: 11.5px;
+  color: var(--text2);
+  opacity: .7;
+  padding: 3px 8px;
+  user-select: none;
+}
+.sb-rename-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 4px;
+  margin: 2px 4px 2px 0;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+}
+.sidebar-item.ctx-target { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+.move-option-path {
+  margin-left: auto;
+  padding-left: 10px;
+  font-size: 11px;
+  color: var(--text2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+.trash-item-count { margin-left: 6px; font-size: 11px; color: var(--text2); }
+.trash-item-name svg { vertical-align: -2px; color: var(--accent); }
+
+/* Context menu */
+.ctx-menu {
+  position: fixed;
+  z-index: 1100;
+  min-width: 190px;
+  padding: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+}
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.ctx-item:hover,
+.ctx-item:focus { background: var(--bg3); outline: none; }
+.ctx-item:disabled { opacity: .4; cursor: default; }
+.ctx-danger { color: var(--red); }
+.ctx-sep { height: 1px; margin: 4px 2px; background: var(--border); }
+
+/* Command palette */
+.palette-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, .35);
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 12px 0;
+}
+.palette-backdrop.open { display: flex; }
+.palette {
+  width: min(640px, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, .35);
+  overflow: hidden;
+}
+#palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 15px;
+  padding: 14px 16px;
+  outline: none;
+}
+#palette-list { overflow-y: auto; padding: 4px; }
+.palette-section {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text2);
+  user-select: none;
+}
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.palette-item.selected { background: var(--accent); color: #fff; }
+.palette-icon { width: 16px; text-align: center; flex-shrink: 0; opacity: .75; display: flex; align-items: center; justify-content: center; }
+.palette-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-meta { font-size: 11.5px; opacity: .65; white-space: nowrap; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.palette-empty { padding: 18px 12px; text-align: center; font-size: 13px; color: var(--text2); }
+.palette-foot {
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text2);
+  user-select: none;
+}
+@media (max-width: 600px) {
+  .palette-backdrop { padding-top: 6vh; }
+  .palette-foot { display: none; }
+}
