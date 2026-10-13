@@ -25,7 +25,10 @@
       "**/.*/**",
       ".git/**",
       ".claude/**",
-      ".firebase/**"
+      ".firebase/**",
+      "tests/**",
+      "buildme.sh",
+      "_to_delete/**"
     ]
   },
   "firestore": {

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "node --check app.js && node --check sw.js && node --check tree-utils.js",
-    "test:unit": "node tests/tree-utils.test.cjs && node tests/sw.test.cjs",
+    "test:unit": "node tests/tree-utils.test.cjs && node tests/sw.test.cjs && node tests/hosting-ignore.test.cjs",
     "test:roundtrip": "jest --testMatch \"**/tests/preview-roundtrip.test.cjs\" --testEnvironment jsdom",
     "test:e2e": "node tests/e2e-folders.cjs && node tests/e2e-medium.cjs",
     "test": "npm run check && npm run test:unit && npm run test:roundtrip && npm run test:e2e"

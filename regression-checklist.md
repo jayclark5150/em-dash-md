@@ -731,3 +731,32 @@ roundtrip suites were not run here (no browser in this shell); Jay runs
 - [ ] `npm test` on the Mac passes after the cleanup (no code changed).
 - [ ] `rm -r _to_delete` once the rollback copy is no longer wanted.
 - [ ] Git: Dockerfile and server.js show as deleted; stage them with the commit.
+
+## 2026-10-12 Hosting lockdown for tests and buildme.sh (HIGH RISK, CAB required before deploy)
+
+**OpenSpec**
+- Purpose: stop serving `tests/` and `buildme.sh` from em-dash-md.web.app.
+- Scope: `firebase.json` hosting.ignore only. No app code, rules or CSP change.
+- Cause: hosting `public` is `.`, and the ignore globs are root-anchored, so
+  anything not listed is public (found by the 33 to 41 file jump when
+  `_to_delete/` held MCP files that were served for a short time).
+- Change: add `tests/**`, `buildme.sh`, `_to_delete/**` to the ignore list.
+- Acceptance: served set contains only the app, icons, manifest, config
+  example and README; the app still loads; the old URLs return 404.
+- Rollback: remove the three entries and run `firebase deploy --only hosting`.
+- Not done on purpose: moving the app into `public/`, security headers.
+
+**Audit**: simulated the ignore list against the real file list with minimatch.
+Baseline simulation gave 32 files, matching the real deploy count, so the
+simulation is trusted. After: 25 files, the 7 removed are buildme.sh and the 6
+files under tests/. sw.js ASSETS reference only served files.
+
+**QA (executed)**: `npm run test:unit` 20/20, sw 9/9, new hosting-ignore 23/23
+on the device. Not run: an actual deploy (Jay deploys), and the live 404 check.
+
+**Checks added**
+- [ ] CAB approval recorded before `firebase deploy --only hosting`.
+- [ ] After deploy: found 25 files; `/tests/sw.test.cjs`, `/tests/e2e/firebase-stub.js`
+  and `/buildme.sh` return 404; the app loads and the footer shows v3.29.1.
+- [ ] `tests/hosting-ignore.test.cjs` stays in `test:unit`.
+- [ ] README.md and firebase-config.example.js are still public (harmless); decide later.
