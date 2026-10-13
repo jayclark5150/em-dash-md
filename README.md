@@ -89,9 +89,24 @@ const FIREBASE_CONFIG = {
 ```bash
 npm install -g firebase-tools
 firebase login
-firebase init hosting   # public dir: .  |  single-page app: No
 firebase deploy
 ```
+
+The repo already contains `firebase.json` and `.firebaserc`, so do not run `firebase init hosting` (it can overwrite them). Edit `.firebaserc` to point at your own project instead.
+
+Hosting serves the project root (`"public": "."`), so everything not listed in the `ignore` array of `firebase.json` is public. The list already excludes tests, scripts, patches, `package*.json`, `buildme.sh`, Firestore files and key files. If you add a new file or folder that must stay private, add it to that list. `npm run test:unit` fails if the key entries are removed. After a deploy, the file count it prints should match what you expect to serve (25 at v3.29.1).
+
+---
+
+## Testing
+
+```bash
+npm install
+npx playwright install chromium   # once, for the browser tests
+npm test                          # syntax check, unit, round-trip and browser tests
+```
+
+The browser tests (`tests/e2e-*.cjs`) run the real app in headless Chromium against an in-memory Firebase stub, so they never touch your Firestore data. `npm run test:unit` runs only the fast tests.
 
 ---
 
@@ -125,6 +140,8 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ### v3.29.1
 - **Security**: risky HTML in diagram labels is removed before the diagram library sees it (the browser security policy was already blocking it)
+- **Security**: hosting no longer serves `tests/`, `buildme.sh` or `_to_delete/`; a test guards the ignore list
+- **Cleanup**: the retired MCP server, its Dockerfile and the `firebase-admin` dependency were removed from the repository
 
 ### v3.29.0
 - **Fix**: storage access can no longer stop the app from starting (blocked or corrupt browser storage is ignored)
