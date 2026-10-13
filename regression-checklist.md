@@ -760,3 +760,24 @@ on the device. Not run: an actual deploy (Jay deploys), and the live 404 check.
   and `/buildme.sh` return 404; the app loads and the footer shows v3.29.1.
 - [ ] `tests/hosting-ignore.test.cjs` stays in `test:unit`.
 - [ ] README.md and firebase-config.example.js are still public (harmless); decide later.
+
+## 2026-10-12 v3.30.0 search box clear button (LOW RISK, lightweight)
+
+**Spec**: add an x button to the sidebar search and the Open Document search.
+It clears the text, re-filters the list, keeps focus in the box, and is hidden
+while the box is empty (CSS :placeholder-shown, so it also tracks values the
+app clears from code). UI only; no data, rules or CSP change.
+
+**QA (executed, sandbox Chromium 141)**: e2e-medium 57/57 (14 new checks),
+e2e-folders 90/90, unit 20/20 and sw 9/9. Screenshots checked in light and dark
+themes, long text does not run under the button. Not yet run on the Mac (Chrome 156).
+
+**Not changed on purpose**: the Find & Replace bar and the Cmd+K palette keep
+their own close and Escape behaviour.
+
+**Checks added**
+- [ ] `npm test` on the Mac passes, including the "Search clear (x) button" section.
+- [ ] Footer reads v3.30.0 after deploy.
+- [ ] Any new search input that should have the button needs the
+  `.search-field` wrapper, a `placeholder` attribute and a `.search-clear` button
+  (the button hides via :placeholder-shown, so the placeholder is required).

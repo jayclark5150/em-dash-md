@@ -138,6 +138,9 @@ Plain HTML, CSS, and JavaScript — no build step, no framework.
 
 ## Changelog
 
+### v3.30.0
+- **New**: the search boxes in the sidebar and in Open Document have an ✕ button that clears the text and restores the full list
+
 ### v3.29.1
 - **Security**: risky HTML in diagram labels is removed before the diagram library sees it (the browser security policy was already blocking it)
 - **Security**: hosting no longer serves `tests/`, `buildme.sh` or `_to_delete/`; a test guards the ignore list

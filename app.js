@@ -1405,6 +1405,22 @@ async function deleteCurrentDoc() {
 
 document.getElementById('drive-delete-btn').addEventListener('click', deleteCurrentDoc);
 
+// ── Search box clear (x) buttons ──────────────────────────────────────────────
+// Empties the box, fires the normal input event so the list re-filters, and
+// keeps the cursor in the box. mousedown is cancelled so the box never loses focus.
+document.addEventListener('mousedown', (e) => {
+  if (e.target.closest && e.target.closest('.search-clear')) e.preventDefault();
+});
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('.search-clear');
+  if (!btn) return;
+  const input = btn.parentElement && btn.parentElement.querySelector('input');
+  if (!input) return;
+  input.value = '';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus();
+});
+
 // ── Doc browser event wiring ──────────────────────────────────────────────────
 document.getElementById('open-btn').addEventListener('click', openDocBrowser);
 document.getElementById('recent-btn').addEventListener('click', openDocBrowser);

@@ -146,7 +146,10 @@
         </div>
       </div>
       <div id="sidebar-search-wrap">
-        <input type="text" id="sidebar-search" placeholder="Search documents…" autocomplete="off" spellcheck="false"/>
+        <div class="search-field">
+          <input type="text" id="sidebar-search" placeholder="Search documents…" autocomplete="off" spellcheck="false"/>
+          <button type="button" class="search-clear" aria-label="Clear search" title="Clear search" tabindex="-1">&#x2715;</button>
+        </div>
       </div>
       <div id="sidebar-sort-bar">
         <button class="sb-sort-btn active" data-sort="groups">Groups</button>
@@ -375,7 +378,7 @@
 
 <!-- Status bar -->
 <div id="statusbar">
-  <span id="app-version">v3.29.1</span>
+  <span id="app-version">v3.30.0</span>
   <span id="word-count" title="Click to set a word goal">Words: 0</span>
   <span id="char-count">Chars: 0</span>
   <span id="cursor-pos">Ln 1, Col 1</span>
@@ -427,7 +430,10 @@
   <div class="modal" style="width:760px">
     <div class="modal-title">Open Document</div>
     <div class="doc-browser-controls">
-      <input type="text" class="modal-search" id="doc-browser-search" placeholder="Search documents…" autocomplete="off"/>
+      <div class="search-field search-field-grow">
+        <input type="text" class="modal-search" id="doc-browser-search" placeholder="Search documents…" autocomplete="off"/>
+        <button type="button" class="search-clear" aria-label="Clear search" title="Clear search" tabindex="-1">&#x2715;</button>
+      </div>
       <select id="doc-browser-tag-filter" class="doc-browser-sort">
         <option value="">All tags</option>
       </select>

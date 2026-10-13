@@ -113,7 +113,7 @@ function startServer() {
   check('empty folder shows "Empty" placeholder', (await page.locator('.sb-node[data-node="F2"] .sb-empty-folder').textContent()).trim() === 'Empty');
   check('loadMostRecent skipped the newest item (a folder) and opened a document',
     (await page.locator('#tb-title').textContent()) === 'Beta.md', await page.locator('#tb-title').textContent());
-  check('version label bumped', (await page.locator('#app-version').textContent()) === 'v3.29.1');
+  check('version label bumped', (await page.locator('#app-version').textContent()) === 'v3.30.0');
 
   // ── S2 folder click toggles, never opens editor ──────────────────────────────
   console.log('\nS2 folder click');
