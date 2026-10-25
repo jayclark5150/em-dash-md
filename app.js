@@ -719,6 +719,7 @@ const CHECK_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="no
 function addCodeCopyButtons() {
   previewInner.querySelectorAll('pre').forEach((pre) => {
     if (!pre.querySelector('code')) return;
+    if (pre.closest('.code-block')) return; // already wrapped
     const wrap = document.createElement('div');
     wrap.className = 'code-block';
     wrap.contentEditable = 'false';
@@ -849,8 +850,24 @@ function lpDeactivate(blockEl, ta) {
   }
   blockEl.onclick = () => lpActivate(blockEl);
 
-  addCodeCopyButtons();
-  renderMermaidDiagrams();
+  // Scope post-render helpers to this block only to avoid re-wrapping
+  // pre elements in other blocks that were already processed by lpRender().
+  blockEl.querySelectorAll('pre').forEach((pre) => {
+    if (!pre.querySelector('code') || pre.closest('.code-block')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'code-block';
+    wrap.contentEditable = 'false';
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-code-btn';
+    btn.setAttribute('aria-label', 'Copy code');
+    btn.title = 'Copy code';
+    btn.innerHTML = COPY_ICON_SVG;
+    wrap.appendChild(btn);
+  });
+
   lpSyncToEditor();
 }
 
