@@ -2029,6 +2029,21 @@ document.getElementById('focus-exit-btn').addEventListener('click', exitFocusMod
 previewInner.contentEditable = 'true';
 previewInner.spellcheck = true;
 
+// Forward clicks on the pane background (outside the 680px prose column) to
+// the contenteditable div, so an empty doc is editable anywhere in preview mode.
+previewPane.addEventListener('click', (e) => {
+  if (e.target === previewPane) {
+    previewInner.focus();
+    // Place cursor at end
+    const range = document.createRange();
+    range.selectNodeContents(previewInner);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+});
+
 let previewWysiwygTimer;
 let previewDirty = false;
 

@@ -1022,8 +1022,15 @@ body.theme-light .sb-action-btn { color: #999; }
   transform-origin: top left;
   max-width: 680px;
   margin: 0 auto;
+  min-height: 100%;
 }
 #preview-inner:focus { outline: none; }
+#preview-inner:empty::before {
+  content: 'Start writing…';
+  color: var(--ed-placeholder);
+  pointer-events: none;
+  display: block;
+}
 
 #preview-pane h1,h2,h3,h4,h5,h6 { color: var(--text); margin: 1.5em 0 .5em; line-height: 1.3; }
 #preview-pane h1 { font-size: 1.8em; border-bottom: 1px solid var(--border); padding-bottom: .3em; }
