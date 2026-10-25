@@ -816,9 +816,12 @@ function lpActivate(blockEl) {
     ta.style.height = ta.scrollHeight + 'px';
     blockEl.dataset.md = ta.value;
     lpSyncToEditor();
+    clearTimeout(ta._lpTimer);
+    ta._lpTimer = setTimeout(() => lpLiveRender(blockEl, ta), 600);
   });
 
   ta.addEventListener('keydown', (e) => {
+    clearTimeout(ta._lpTimer);
     if (e.key === 'Escape') { e.preventDefault(); ta.blur(); return; }
     if (e.key === 'Enter' && !e.shiftKey && !ta.value.includes('\n')) {
       e.preventDefault();
@@ -829,7 +832,11 @@ function lpActivate(blockEl) {
     }
   });
 
-  ta.addEventListener('blur', () => { lpDeactivate(blockEl, ta); });
+  ta.addEventListener('blur', () => {
+    clearTimeout(ta._lpTimer);
+    if (ta._lpLiveRendered) return;
+    lpDeactivate(blockEl, ta);
+  });
 }
 
 function lpDeactivate(blockEl, ta) {
@@ -869,6 +876,42 @@ function lpDeactivate(blockEl, ta) {
   });
 
   lpSyncToEditor();
+}
+
+function lpLiveRender(blockEl, ta) {
+  ta._lpLiveRendered = true;
+  const md = ta.value.trim();
+  blockEl.dataset.md = md;
+  blockEl.classList.remove('lp-active');
+
+  if (!md) {
+    blockEl.remove();
+    lpSyncToEditor();
+    return;
+  }
+
+  try {
+    blockEl.innerHTML = DOMPurify.sanitize(marked.parse(md));
+  } catch (e) {
+    blockEl.textContent = md;
+  }
+  blockEl.onclick = () => lpActivate(blockEl);
+
+  blockEl.querySelectorAll('pre').forEach((pre) => {
+    if (!pre.querySelector('code') || pre.closest('.code-block')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'code-block';
+    wrap.contentEditable = 'false';
+    pre.parentNode.insertBefore(wrap, pre);
+    wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'copy-code-btn';
+    btn.setAttribute('aria-label', 'Copy code');
+    btn.title = 'Copy code';
+    btn.innerHTML = COPY_ICON_SVG;
+    wrap.appendChild(btn);
+  });
 }
 
 function lpFocusNext(blockEl) {
@@ -2359,48 +2402,68 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
+
+// Returns the LP block's textarea when one is active, otherwise the main editor.
+function getActiveEditor() {
+  if (_lpMode) {
+    const ta = previewInner.querySelector('.lp-active textarea.lp-edit-ta');
+    if (ta) return ta;
+  }
+  return editor;
+}
+
+// Prevent the LP textarea from losing focus when the user clicks a toolbar button.
+document.getElementById('format-bar').addEventListener('mousedown', (e) => {
+  if (_lpMode && previewInner.querySelector('.lp-active textarea.lp-edit-ta')) {
+    e.preventDefault();
+  }
+});
+
 function wrapSelection(before, after) {
   if (after === undefined) after = before;
-  const start    = editor.selectionStart;
-  const end      = editor.selectionEnd;
-  const selected = editor.value.slice(start, end);
+  const target   = getActiveEditor();
+  const start    = target.selectionStart;
+  const end      = target.selectionEnd;
+  const selected = target.value.slice(start, end);
   const newText  = before + selected + after;
   document.execCommand('insertText', false, newText);
-  editor.setSelectionRange(start + before.length, start + before.length + selected.length);
-  editor.dispatchEvent(new Event('input'));
-  editor.focus();
+  target.setSelectionRange(start + before.length, start + before.length + selected.length);
+  target.dispatchEvent(new Event('input'));
+  target.focus();
 }
 
 function prefixLines(prefix) {
-  const start     = editor.selectionStart;
-  const end       = editor.selectionEnd;
-  const lineStart = editor.value.lastIndexOf('\n', start - 1) + 1;
-  const lineEnd   = editor.value.indexOf('\n', end);
-  const blockEnd  = lineEnd === -1 ? editor.value.length : lineEnd;
-  const block     = editor.value.slice(lineStart, blockEnd);
+  const target    = getActiveEditor();
+  const start     = target.selectionStart;
+  const end       = target.selectionEnd;
+  const lineStart = target.value.lastIndexOf('\n', start - 1) + 1;
+  const lineEnd   = target.value.indexOf('\n', end);
+  const blockEnd  = lineEnd === -1 ? target.value.length : lineEnd;
+  const block     = target.value.slice(lineStart, blockEnd);
   const lines     = block.split('\n');
   const already   = lines.every(l => l.startsWith(prefix));
   const newBlock  = already
     ? lines.map(l => l.slice(prefix.length)).join('\n')
     : lines.map(l => prefix + l).join('\n');
-  editor.focus();
-  editor.setSelectionRange(lineStart, blockEnd);
+  target.focus();
+  target.setSelectionRange(lineStart, blockEnd);
   document.execCommand('insertText', false, newBlock);
-  editor.dispatchEvent(new Event('input'));
+  target.dispatchEvent(new Event('input'));
 }
 
 function insertHeading(level) {
-  const hashes = '#'.repeat(level) + ' ';
-  const start     = editor.selectionStart;
-  const lineStart = editor.value.lastIndexOf('\n', start - 1) + 1;
-  const lineEnd   = editor.value.indexOf('\n', start);
-  const end       = lineEnd === -1 ? editor.value.length : lineEnd;
-  const line      = editor.value.slice(lineStart, end);
+  const target    = getActiveEditor();
+  const hashes    = '#'.repeat(level) + ' ';
+  const start     = target.selectionStart;
+  const lineStart = target.value.lastIndexOf('\n', start - 1) + 1;
+  const lineEnd   = target.value.indexOf('\n', start);
+  const end       = lineEnd === -1 ? target.value.length : lineEnd;
+  const line      = target.value.slice(lineStart, end);
   const stripped  = line.replace(/^#{1,6}\s*/, '');
-  editor.focus();
-  editor.setSelectionRange(lineStart, end);
+  target.focus();
+  target.setSelectionRange(lineStart, end);
   document.execCommand('insertText', false, hashes + stripped);
-  editor.dispatchEvent(new Event('input'));
+  target.dispatchEvent(new Event('input'));
 }
 
 // ── Format bar button handlers ────────────────────────────────────────────────
@@ -2411,7 +2474,8 @@ document.getElementById('fmt-ul-btn').addEventListener('click',     () => prefix
 document.getElementById('fmt-ol-btn').addEventListener('click',     () => prefixLines('1. '));
 document.getElementById('fmt-quote-btn').addEventListener('click',  () => prefixLines('> '));
 document.getElementById('fmt-code-btn').addEventListener('click',   () => {
-  const selected = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+  const target   = getActiveEditor();
+  const selected = target.value.slice(target.selectionStart, target.selectionEnd);
   if (selected.includes('\n')) {
     wrapSelection('```\n', '\n```');
   } else {
@@ -2419,7 +2483,8 @@ document.getElementById('fmt-code-btn').addEventListener('click',   () => {
   }
 });
 document.getElementById('fmt-link-btn').addEventListener('click', () => {
-  const selected = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+  const target   = getActiveEditor();
+  const selected = target.value.slice(target.selectionStart, target.selectionEnd);
   if (selected) {
     wrapSelection('[', '](url)');
   } else {
@@ -2432,16 +2497,18 @@ document.getElementById('fmt-image-btn').addEventListener('click', () => {
 
 document.getElementById('fmt-heading-btn').addEventListener('click', () => insertHeading(1));
 function insertTable(rows, cols) {
+  const target = getActiveEditor();
   const header = '| ' + Array(cols).fill('Column').join(' | ') + ' |';
   const sep    = '| ' + Array(cols).fill('---').join(' | ') + ' |';
   const row    = '| ' + Array(cols).fill('     ').join(' | ') + ' |';
   const table  = '\n' + header + '\n' + sep + '\n' + Array(rows).fill(row).join('\n') + '\n';
-  const pos    = editor.selectionStart;
-  const before = editor.value.slice(0, pos);
+  const pos    = target.selectionStart;
+  const before = target.value.slice(0, pos);
   const prefix = (before.length && !before.endsWith('\n')) ? '\n' : '';
+  target.focus();
   document.execCommand('insertText', false, prefix + table);
-  editor.dispatchEvent(new Event('input'));
-  editor.focus();
+  target.dispatchEvent(new Event('input'));
+  target.focus();
 }
 
 // Table picker grid (5×5)
@@ -2552,6 +2619,7 @@ document.addEventListener('keydown', (e) => {
           if (ta) { active.dataset.md = ta.value; lpSyncToEditor(); }
         }
         _lpMode = false;
+        previewEditing = false; // force renderPreview to run fully
         previewInner.contentEditable = 'true';
         renderPreview();
       }
@@ -2560,6 +2628,11 @@ document.addEventListener('keydown', (e) => {
       editorPane.style.display = 'none';
       divider.style.display   = 'none';
       if (!_lpMode) {
+        // Kill any pending WYSIWYG Turndown timer before entering LP mode so it
+        // cannot fire on LP block HTML and corrupt editor.value with escaped syntax.
+        clearTimeout(previewWysiwygTimer);
+        previewEditing = false;
+        previewDirty   = false;
         _lpMode = true;
         previewInner.contentEditable = 'false';
         lpRender();
@@ -2576,6 +2649,7 @@ document.addEventListener('keydown', (e) => {
           if (ta) { active.dataset.md = ta.value; lpSyncToEditor(); }
         }
         _lpMode = false;
+        previewEditing = false; // force renderPreview to run fully
         previewInner.contentEditable = 'true';
         renderPreview();
       }

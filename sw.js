@@ -1,4 +1,4 @@
-const CACHE = 'em-dash-md-v20';
+const CACHE = 'em-dash-md-v21';
 const ASSETS = [
   '/',
   '/index.html',

@@ -1,6 +1,6 @@
 {
   "name": "em-dash-md",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Cloud-first Markdown editor on Firebase (browser app, no build step)",
   "type": "module",
   "scripts": {
