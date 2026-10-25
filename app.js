@@ -217,11 +217,19 @@ let authMode = 'signin';
 function showAuthOverlay() {
   document.getElementById('auth-overlay').classList.remove('hidden');
   document.getElementById('signout-btn').style.display = 'none';
+  document.getElementById('sidebar-user-label').textContent = 'EM-DASH MD';
+  document.getElementById('sidebar-user-email').textContent = '';
+  document.getElementById('sidebar-account-menu').classList.remove('open');
 }
 
 function hideAuthOverlay() {
   document.getElementById('auth-overlay').classList.add('hidden');
   document.getElementById('signout-btn').style.display = '';
+  const u = auth.currentUser;
+  if (u) {
+    document.getElementById('sidebar-user-label').textContent = u.email.split('@')[0];
+    document.getElementById('sidebar-user-email').textContent = u.email;
+  }
 }
 
 function setAuthError(msg) {
@@ -356,6 +364,19 @@ document.getElementById('signout-btn').addEventListener('click', async () => {
   if (isDirty) await performSave(true);
   await auth.signOut();
   await purgeLocalDataAndReload();
+});
+
+// ── Sidebar account menu ──────────────────────────────────────────────────────
+document.getElementById('sidebar-account-btn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('sidebar-account-menu').classList.toggle('open');
+});
+document.getElementById('sidebar-signout-item').addEventListener('click', async () => {
+  document.getElementById('sidebar-account-menu').classList.remove('open');
+  document.getElementById('signout-btn').click();
+});
+document.addEventListener('click', () => {
+  document.getElementById('sidebar-account-menu').classList.remove('open');
 });
 
 // ── Delete account ────────────────────────────────────────────────────────────
@@ -2567,11 +2588,6 @@ document.getElementById('hdr-rename-btn').addEventListener('click', () => {
 document.getElementById('hdr-duplicate-btn').addEventListener('click', () => {
   document.getElementById('hdr-more-menu').classList.remove('open');
   duplicateCurrentDoc();
-});
-
-document.getElementById('hdr-focus-mode').addEventListener('click', () => {
-  toggleFocusMode();
-  document.getElementById('hdr-more-menu').classList.remove('open');
 });
 
 // ── Theme cycle ──────────────────────────────────────────────────────────────

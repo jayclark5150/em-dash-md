@@ -781,3 +781,62 @@ their own close and Escape behaviour.
 - [ ] Any new search input that should have the button needs the
   `.search-field` wrapper, a `placeholder` attribute and a `.search-clear` button
   (the button hides via :placeholder-shown, so the placeholder is required).
+
+## 2026-10-12 firestore_autotag.py v2 (HIGH RISK: writes production data)
+
+**OpenSpec**: in the script docstring (purpose, scope, inputs, outputs, skips,
+safety, risk). Scope is the `tags` field only; existing tags are never removed.
+Default is preview; `--apply` is required to write; `--list` and `--self-test`
+are read only or offline.
+
+**Bugs fixed from v1**: v1 wrote by default and `--dry-run` was opt-in; it
+tagged folders and trashed documents; it had no backup or rollback; it could
+overwrite a change made in the app between its read and its write.
+
+**Regression gate**: self-test runs before any network call; any failure is a
+hard halt (exit 1) and says so. Mode (preview, apply, list, restore) is printed
+and logged. Logs and backups go to ~/Temp, never into the repo (hosting
+publishes the repo root).
+
+**QA (executed, fake Firestore)**: `--self-test` and `tests/autotag.test.py`
+11/11 (list, preview, apply, idempotent second run, restore, changed-meanwhile
+skip, gate halt). NOT executed: any call to the real Firestore REST API (no
+credentials in the sandbox). The first real run is a preview.
+
+**Audit notes**: restore writes without a precondition by design. HTTP 400 is
+treated as a changed-meanwhile skip; any other error is counted as an error.
+Tags are stored lower case, matching the app.
+
+**Checks added**
+- [ ] `npm run test:autotag` passes on the Mac (needs python3).
+- [ ] First real run is `--list`, then the default preview, and Jay reviews the
+  proposed tags before `--apply`.
+- [ ] After apply: tags show in Open Document, the log and backup files exist
+  in ~/Temp, and a second preview reports "Nothing to do".
+- [ ] New rules get a matching case in `self_test()` before they are used.
+
+## 2026-10-12 autotag rules: document type group (HIGH RISK data write, not yet applied)
+
+**Spec change**: 14 title rules added to firestore_autotag.py (day page, runbook,
+policy, incident response, checklist, troubleshooting, executive summary, cab,
+sop, 1on1, guideline, training, to-do, phishing). Jay chose title-only rules and
+the "document type" group; organization/project tags and "word copy" were not
+chosen and are not implemented.
+
+**Evidence**: `--list` log showed 2418 live documents, 1183 tagged, 1235 not.
+Offline dry run of the new rules on those real titles: 544 documents would
+change (524 gain one tag, 20 gain two); 705 stay untagged. Samples of policy,
+incident, cab, sop, checklist and troubleshooting hits were reviewed, no false
+positives seen. Existing tags are not removed.
+
+**QA (executed)**: self-test now has a positive and a near-miss case for every
+rule, plus a check that every rule has a case; flow test 11/11. NOT executed:
+the real Firestore preview (Jay runs it).
+
+**Checks added**
+- [ ] Run the preview (default mode) and review the per-tag counts and a sample.
+- [ ] CAB approval recorded (or waived by Jay) before `--apply`.
+- [ ] After apply: tag counts in Open Document match the preview; a second
+  preview reports "Nothing to do"; the backup JSON exists in ~/Temp.
+- [ ] Known limits: documents edited in the app during the run are skipped, run
+  again; titles are matched as stored (some are truncated at about 50 characters).

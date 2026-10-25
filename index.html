@@ -136,7 +136,18 @@
   <div id="sidebar">
     <div id="sidebar-inner">
       <div id="sidebar-header">
-        <span id="sidebar-title">EM-DASH MD</span>
+        <button id="sidebar-account-btn" class="sidebar-account-btn" title="Account">
+          <span id="sidebar-user-label">EM-DASH MD</span>
+          <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M4.427 7.427l3.396 3.396a.25.25 0 0 0 .354 0l3.396-3.396A.25.25 0 0 0 11.396 7H4.604a.25.25 0 0 0-.177.427z"/></svg>
+        </button>
+        <div id="sidebar-account-menu" class="sb-account-menu">
+          <div id="sidebar-user-email" class="sb-account-email"></div>
+          <div class="sb-account-sep"></div>
+          <button id="sidebar-signout-item" class="sb-account-item">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.75C2 1.784 2.784 1 3.75 1h2.5a.75.75 0 0 1 0 1.5h-2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h2.5a.75.75 0 0 1 0 1.5h-2.5A1.75 1.75 0 0 1 2 13.25Zm6.56 4.5h4.69l-1.22-1.22a.75.75 0 1 1 1.06-1.06l2.5 2.5a.75.75 0 0 1 0 1.06l-2.5 2.5a.749.749 0 0 1-1.06-1.06l1.22-1.22H8.56a.75.75 0 0 1 0-1.5Z"/></svg>
+            Sign out
+          </button>
+        </div>
         <div class="sb-head-actions">
         <button class="sb-head-btn" id="sidebar-new-folder-btn" title="New folder" aria-label="New folder"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h3.17a1.5 1.5 0 0 1 1.06.44L7.3 3H13.5A1.5 1.5 0 0 1 15 4.5V8h-1V4.5a.5.5 0 0 0-.5-.5H7.09a1.5 1.5 0 0 1-1.06-.44L5.26 3H2.5a.5.5 0 0 0-.5.5v8a.5.5 0 0 0 .5.5H8v1H2.5A1.5 1.5 0 0 1 1 11.5v-8z"/><path d="M12.5 9a.5.5 0 0 1 .5.5V11h1.5a.5.5 0 0 1 0 1H13v1.5a.5.5 0 0 1-1 0V12h-1.5a.5.5 0 0 1 0-1H12V9.5a.5.5 0 0 1 .5-.5z"/></svg></button>
         <button class="sb-head-btn" id="sidebar-palette-btn" title="Command palette (Ctrl/Cmd+K)" aria-label="Command palette"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2A1.5 1.5 0 0 0 1 3.5v9A1.5 1.5 0 0 0 2.5 14h11a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 13.5 2h-11zM2 3.5a.5.5 0 0 1 .5-.5h11a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-9z"/><path d="M4.146 5.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1 0 .708l-2 2a.5.5 0 0 1-.708-.708L5.793 7.5 4.146 5.854a.5.5 0 0 1 0-.708zM8 10h3.5a.5.5 0 0 1 0 1H8a.5.5 0 0 1 0-1z"/></svg></button>
@@ -225,11 +236,6 @@
         <button class="hdr-dd-item" id="hdr-duplicate-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
           Duplicate
-        </button>
-        <div class="hdr-dd-sep"></div>
-        <button class="hdr-dd-item hdr-dd-danger" id="hdr-focus-mode">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
-          Focus Mode (F11)
         </button>
         <div class="hdr-dd-sep"></div>
         <button class="hdr-dd-item hdr-dd-danger" id="hdr-delete-account-btn">
@@ -378,7 +384,6 @@
 
 <!-- Status bar -->
 <div id="statusbar">
-  <span id="app-version">v3.30.0</span>
   <span id="word-count" title="Click to set a word goal">Words: 0</span>
   <span id="char-count">Chars: 0</span>
   <span id="cursor-pos">Ln 1, Col 1</span>
