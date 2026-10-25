@@ -1090,7 +1090,7 @@ body.theme-light .sb-action-btn { color: #999; }
   font-family: var(--ed-font, 'Cascadia Code', 'Fira Code', monospace);
   font-size: 0.9em;
   line-height: 1.65;
-  color: var(--ed-text);
+  color: var(--text);
   padding: 2px 0;
   overflow: hidden;
   min-height: 1.5em;
