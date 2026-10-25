@@ -745,6 +745,15 @@ function lpRender() {
   try { tokens = marked.lexer(md); } catch (e) { return; }
 
   const blocks = tokens.filter(t => t.type !== 'space');
+
+  // Fall back to regular rendering for very large documents
+  if (blocks.length > 60) {
+    previewInner.innerHTML = DOMPurify.sanitize(marked.parse(md));
+    addCodeCopyButtons();
+    renderMermaidDiagrams();
+    return;
+  }
+
   previewInner.innerHTML = '';
 
   if (!blocks.length) {
