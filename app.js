@@ -586,6 +586,7 @@ let currentParentId = null; // parentId of the currently open doc (null = root)
 let isDirty        = false;
 let autoSaveTimer  = null;
 let previewEditing = false;
+let _lpMode        = false;
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const editor         = document.getElementById('editor');
@@ -638,6 +639,7 @@ if (window.DOMPurify) {
 
 // ── Render preview ────────────────────────────────────────────────────────────
 function renderPreview() {
+  if (_lpMode) { lpRender(); return; }
   if (previewEditing) return;
   if (window.marked && window.DOMPurify) {
     try {
@@ -731,6 +733,155 @@ function addCodeCopyButtons() {
     btn.innerHTML = COPY_ICON_SVG;
     wrap.appendChild(btn);
   });
+}
+
+// ── Live Preview — Typora-style block editing ─────────────────────────────────
+function lpRender() {
+  if (!window.marked || !window.DOMPurify) return;
+  if (previewInner.querySelector('.lp-active')) return;
+
+  const md = editor.value || '';
+  let tokens;
+  try { tokens = marked.lexer(md); } catch (e) { return; }
+
+  const blocks = tokens.filter(t => t.type !== 'space');
+  previewInner.innerHTML = '';
+
+  if (!blocks.length) {
+    const ph = document.createElement('p');
+    ph.className = 'lp-placeholder';
+    ph.textContent = 'Start writing…';
+    previewInner.appendChild(ph);
+    ph.addEventListener('click', () => {
+      ph.remove();
+      lpNewBlock(null);
+    });
+    return;
+  }
+
+  blocks.forEach((token) => {
+    const div = document.createElement('div');
+    div.className = 'lp-block';
+    div.dataset.md = token.raw.trim();
+    try {
+      div.innerHTML = DOMPurify.sanitize(marked.parse(token.raw));
+    } catch (e) {
+      div.textContent = token.raw;
+    }
+    div.onclick = () => lpActivate(div);
+    previewInner.appendChild(div);
+  });
+
+  addCodeCopyButtons();
+  renderMermaidDiagrams();
+}
+
+function lpActivate(blockEl) {
+  if (blockEl.classList.contains('lp-active')) return;
+
+  const current = previewInner.querySelector('.lp-active');
+  if (current) {
+    const ta = current.querySelector('textarea.lp-edit-ta');
+    if (ta) lpDeactivate(current, ta);
+  }
+
+  const rawMd = (blockEl.dataset.md || '').trim();
+  blockEl.classList.add('lp-active');
+  blockEl.innerHTML = '';
+
+  const ta = document.createElement('textarea');
+  ta.className = 'lp-edit-ta';
+  ta.value = rawMd;
+  blockEl.appendChild(ta);
+
+  requestAnimationFrame(() => {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = ta.value.length;
+  });
+
+  ta.addEventListener('input', () => {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+    blockEl.dataset.md = ta.value;
+    lpSyncToEditor();
+  });
+
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); ta.blur(); return; }
+    if (e.key === 'Enter' && !e.shiftKey && !ta.value.includes('\n')) {
+      e.preventDefault();
+      blockEl.dataset.md = ta.value;
+      lpSyncToEditor();
+      ta.blur();
+      lpFocusNext(blockEl);
+    }
+  });
+
+  ta.addEventListener('blur', () => { lpDeactivate(blockEl, ta); });
+}
+
+function lpDeactivate(blockEl, ta) {
+  const newMd = ta.value.trim();
+  blockEl.dataset.md = newMd;
+  blockEl.classList.remove('lp-active');
+
+  if (!newMd) {
+    blockEl.remove();
+    lpSyncToEditor();
+    return;
+  }
+
+  try {
+    blockEl.innerHTML = DOMPurify.sanitize(marked.parse(newMd));
+  } catch (e) {
+    blockEl.textContent = newMd;
+  }
+  blockEl.onclick = () => lpActivate(blockEl);
+
+  addCodeCopyButtons();
+  renderMermaidDiagrams();
+  lpSyncToEditor();
+}
+
+function lpFocusNext(blockEl) {
+  const next = blockEl.nextElementSibling;
+  if (next && next.classList.contains('lp-block')) {
+    lpActivate(next);
+  } else {
+    lpNewBlock(blockEl);
+  }
+}
+
+function lpNewBlock(afterEl) {
+  const newBlock = document.createElement('div');
+  newBlock.className = 'lp-block';
+  newBlock.dataset.md = '';
+  newBlock.onclick = () => lpActivate(newBlock);
+  if (afterEl) {
+    afterEl.after(newBlock);
+  } else {
+    previewInner.appendChild(newBlock);
+  }
+  lpActivate(newBlock);
+}
+
+function lpSyncToEditor() {
+  const blocks = previewInner.querySelectorAll('.lp-block');
+  const parts = [];
+  blocks.forEach(b => {
+    const md = (b.dataset.md || '').trim();
+    if (md) parts.push(md);
+  });
+  const newMd = parts.join('\n\n') + (parts.length ? '\n' : '');
+  if (newMd !== editor.value) {
+    editor.value = newMd;
+    isDirty = true;
+    scheduleAutoSave();
+    updateStats();
+    updateLineNumbers();
+  }
 }
 
 previewInner.addEventListener('click', (e) => {
@@ -2029,12 +2180,15 @@ document.getElementById('focus-exit-btn').addEventListener('click', exitFocusMod
 previewInner.contentEditable = 'true';
 previewInner.spellcheck = true;
 
-// Forward clicks on the pane background (outside the 680px prose column) to
-// the contenteditable div, so an empty doc is editable anywhere in preview mode.
+// Forward clicks on the pane background to the editable area.
+// In LP mode, activate the last block (or create a new one).
 previewPane.addEventListener('click', (e) => {
-  if (e.target === previewPane) {
+  if (e.target !== previewPane) return;
+  if (_lpMode) {
+    const last = previewInner.querySelector('.lp-block:last-child');
+    if (last) { lpActivate(last); } else { lpNewBlock(null); }
+  } else {
     previewInner.focus();
-    // Place cursor at end
     const range = document.createRange();
     range.selectNodeContents(previewInner);
     range.collapse(false);
@@ -2047,9 +2201,10 @@ previewPane.addEventListener('click', (e) => {
 let previewWysiwygTimer;
 let previewDirty = false;
 
-previewInner.addEventListener('focus', () => { previewEditing = true; });
+previewInner.addEventListener('focus', () => { if (!_lpMode) previewEditing = true; });
 
 previewInner.addEventListener('blur', () => {
+  if (_lpMode) return;
   previewEditing = false;
   clearTimeout(previewWysiwygTimer);
   const wasPreviewDirty = previewDirty;
@@ -2071,6 +2226,7 @@ previewInner.addEventListener('blur', () => {
 });
 
 previewInner.addEventListener('input', () => {
+  if (_lpMode) return;
   previewDirty = true;
   clearTimeout(previewWysiwygTimer);
   previewWysiwygTimer = setTimeout(() => {
@@ -2086,6 +2242,7 @@ previewInner.addEventListener('input', () => {
 });
 
 previewInner.addEventListener('paste', (e) => {
+  if (_lpMode) return;
   e.preventDefault();
   const text = e.clipboardData.getData('text/plain');
   document.execCommand('insertText', false, text);
@@ -2361,15 +2518,41 @@ document.addEventListener('keydown', (e) => {
       editorPane.style.flex   = '1';
       previewWrap.style.display = 'none';
       divider.style.display   = 'none';
+      if (_lpMode) {
+        // Commit any active LP block before leaving LP mode
+        const active = previewInner.querySelector('.lp-active');
+        if (active) {
+          const ta = active.querySelector('textarea.lp-edit-ta');
+          if (ta) { active.dataset.md = ta.value; lpSyncToEditor(); }
+        }
+        _lpMode = false;
+        previewInner.contentEditable = 'true';
+        renderPreview();
+      }
     } else if (mode === 'preview') {
       btnPreview.classList.add('active');
       editorPane.style.display = 'none';
       divider.style.display   = 'none';
+      if (!_lpMode) {
+        _lpMode = true;
+        previewInner.contentEditable = 'false';
+        lpRender();
+      }
     } else {
       btnSplit.classList.add('active');
       editorPane.style.display  = '';
       previewWrap.style.display = '';
       divider.style.display     = '';
+      if (_lpMode) {
+        const active = previewInner.querySelector('.lp-active');
+        if (active) {
+          const ta = active.querySelector('textarea.lp-edit-ta');
+          if (ta) { active.dataset.md = ta.value; lpSyncToEditor(); }
+        }
+        _lpMode = false;
+        previewInner.contentEditable = 'true';
+        renderPreview();
+      }
     }
   }
 
@@ -2438,6 +2621,16 @@ function exportBodyHtml() {
   c.querySelectorAll('.copy-code-btn').forEach(b => b.remove());
   c.querySelectorAll('.code-block').forEach(w => w.replaceWith(...w.childNodes));
   c.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+  // In LP mode, unwrap .lp-block divs and drop any editing textarea
+  c.querySelectorAll('.lp-block').forEach(b => {
+    b.querySelectorAll('textarea.lp-edit-ta').forEach(ta => {
+      const rendered = document.createElement('div');
+      try { rendered.innerHTML = DOMPurify.sanitize(marked.parse(ta.value || '')); } catch (e) { rendered.textContent = ta.value; }
+      ta.replaceWith(...rendered.childNodes);
+    });
+    b.replaceWith(...b.childNodes);
+  });
+  c.querySelectorAll('.lp-placeholder').forEach(p => p.remove());
   return c.innerHTML;
 }
 

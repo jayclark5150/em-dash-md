@@ -1070,6 +1070,36 @@ body.theme-light .sb-action-btn { color: #999; }
 #preview-pane li { margin-bottom: .25em; line-height: 1.7; }
 #preview-pane ul li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
 
+/* Live Preview — Typora-style block editing */
+.lp-block {
+  border-radius: 4px;
+  margin: 0 -5px;
+  padding: 1px 5px;
+  cursor: text;
+  transition: background 0.1s;
+}
+.lp-block:hover { background: rgba(128,128,128,0.07); }
+.lp-block.lp-active { background: rgba(128,128,128,0.08); }
+.lp-edit-ta {
+  display: block;
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--ed-font, 'Cascadia Code', 'Fira Code', monospace);
+  font-size: 0.9em;
+  line-height: 1.65;
+  color: var(--ed-text);
+  padding: 2px 0;
+  overflow: hidden;
+  min-height: 1.5em;
+}
+.lp-placeholder {
+  color: var(--ed-placeholder);
+  cursor: text;
+}
+
 /* Zoom controls overlay */
 .zoom-controls {
   position: absolute;
