@@ -815,6 +815,16 @@ Tags are stored lower case, matching the app.
   in ~/Temp, and a second preview reports "Nothing to do".
 - [ ] New rules get a matching case in `self_test()` before they are used.
 
+## UI benchmark references
+
+Comparable commercial Markdown editors to check against when reviewing UI changes:
+
+- **Bear** (Mac/iOS) — gold standard for sidebar document library, tag filtering, and focus mode feel. Check: does the sidebar feel as clean? Do tags surface as fast?
+- **Typora** — sets the bar for WYSIWYG/live-preview Markdown. Check: does the preview pane render common Markdown constructs (tables, task lists, code blocks) as cleanly?
+- **iA Writer** — gold standard for focus mode and prose typography (line length, font choice, spacing). Check: does focus mode feel as distraction-free? Is the preview prose width comfortable?
+
+These are not acceptance criteria — they are reference points. A regression in any of the three areas above (sidebar UX, preview rendering quality, focus mode) should be called out in the relevant log entry.
+
 ## 2026-10-12 autotag rules: document type group (HIGH RISK data write, not yet applied)
 
 **Spec change**: 14 title rules added to firestore_autotag.py (day page, runbook,

@@ -2807,6 +2807,33 @@ const ICON_FOLDER = `<svg width="13" height="13" viewBox="0 0 16 16" fill="curre
 const ICON_PLUS = `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M8 2a.5.5 0 0 1 .5.5v5h5a.5.5 0 0 1 0 1h-5v5a.5.5 0 0 1-1 0v-5h-5a.5.5 0 0 1 0-1h5v-5A.5.5 0 0 1 8 2z"/></svg>`;
 const ICON_MOVE = `<svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor"><path d="M7.646.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 1.707V5.5a.5.5 0 0 1-1 0V1.707L6.354 2.854a.5.5 0 1 1-.708-.708l2-2zm-2 13.708a.5.5 0 0 1 .708-.708L7.5 14.293V10.5a.5.5 0 0 1 1 0v3.793l1.646-1.647a.5.5 0 0 1 .708.708l-2 2a.5.5 0 0 1-.708 0l-2-2z"/></svg>`;
 
+function sidebarPreview(doc) {
+  if (TreeUtils.isFolder(doc)) return '';
+  const raw = doc.content || '';
+  if (!raw.trim()) return '';
+  const titleBase = (doc.title || '').replace(/\.md$/i, '').trim().toLowerCase();
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  // Skip the first line if it's just the document title as a heading
+  let start = 0;
+  if (lines[0] && lines[0].replace(/^#{1,6}\s+/, '').trim().toLowerCase() === titleBase) start = 1;
+  const text = lines.slice(start).join('\n')
+    .replace(/^```[\s\S]*?```/gm, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/!\[.*?\]\(.*?\)/g, '')
+    .replace(/\[(.+?)\]\(.*?\)/g, '$1')
+    .replace(/[*_]{1,2}(.+?)[*_]{1,2}/g, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/~~(.+?)~~/g, '$1')
+    .replace(/^[-*+]\s+/gm, '')
+    .replace(/^\d+\.\s+/gm, '')
+    .replace(/^>\s*/gm, '')
+    .replace(/^[-*_]{3,}\s*$/gm, '')
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.slice(0, 100);
+}
+
 function renderSidebarNode(doc, childrenOf, depth) {
   const isFolderNode = TreeUtils.isFolder(doc);
   const children = TreeUtils.orderSiblings(childrenOf.get(doc.id) || []);
@@ -2836,7 +2863,9 @@ function renderSidebarNode(doc, childrenOf, depth) {
     <div class="sidebar-item${isActive ? ' active' : ''}" data-id="${id}" data-type="${isFolderNode ? 'folder' : 'doc'}" style="padding-left:${8 + indent}px" title="${esc(doc.title || '')}">
       ${chevron}
       <span class="sb-icon">${isFolderNode ? ICON_FOLDER : ICON_DOC}</span>
-      <span class="sidebar-item-title">${esc(title)}</span>
+      <span class="sb-item-body">
+        <span class="sidebar-item-title">${esc(title)}</span>${!isFolderNode ? (() => { const p = sidebarPreview(doc); return p ? `<span class="sb-preview">${esc(p)}</span>` : ''; })() : ''}
+      </span>
       <span class="sb-actions">
         <button class="sb-action-btn sb-add-child" data-id="${id}" title="${isFolderNode ? 'New document in folder' : 'Add sub-page'}">${ICON_PLUS}</button>
         <button class="sb-action-btn sb-move" data-id="${id}" title="Move">${ICON_MOVE}</button>
@@ -2854,7 +2883,9 @@ function renderSidebarFlatItem(d) {
   return `<div class="sidebar-item${isActive ? ' active' : ''}" data-id="${esc(d.id)}" data-type="${folderItem ? 'folder' : 'doc'}" style="padding-left:8px" title="${esc(d.title || '')}">
     <span class="sb-chevron-placeholder"></span>
     <span class="sb-icon">${folderItem ? ICON_FOLDER : ICON_DOC}</span>
-    <span class="sidebar-item-title">${esc(title)}</span>
+    <span class="sb-item-body">
+      <span class="sidebar-item-title">${esc(title)}</span>${!folderItem ? (() => { const p = sidebarPreview(d); return p ? `<span class="sb-preview">${esc(p)}</span>` : ''; })() : ''}
+    </span>
   </div>`;
 }
 
